@@ -1,52 +1,40 @@
 // frontend/src/services/collab.js
-// Collab client for Day15
-// - reconnecting websocket (uses ReconnectingWebSocket if available)
-// - ping/pong heartbeat
-// - sendOp returns a Promise that resolves when an 'op' with same opId is received
-// - presence sending
-// - join announcement on open
-
-/* Note: this file expects ReconnectingWebSocket to be available in your project.
-   If you don't have it, fallback will use native WebSocket with no auto-reconnect.
-   Install: npm i reconnecting-websocket
-*/
-
-let ReconnectingWebSocketLib = null;
-try {
-  // dynamic require so it won't crash in environments where library not installed
-  ReconnectingWebSocketLib = require("reconnecting-websocket").default || require("reconnecting-websocket");
-} catch (e) {
-  ReconnectingWebSocketLib = null;
-}
+// Collab client for Day 21
+// - Ping/Pong Heartbeat (Client-side)
+// - Op Batching/Buffering
 
 const DEFAULT_WS_HOST = (() => {
   if (typeof window === "undefined") return "ws://localhost:8000";
   const loc = window.location;
   const proto = loc.protocol === "https:" ? "wss" : "ws";
   const host = loc.hostname;
-  // assume backend on :8000 (adjust if different)
   return `${proto}://${host}:8000`;
 })();
 
 export default class CollabClient {
-  constructor({ projectId, token = null, onSnapshot, onOp, onPresence, onJoined, onLeft, onOpen, reconnectInterval = 2000 }) {
+  constructor({ projectId, token = null, onSnapshot, onOp, onPresence, onJoined, onLeft, onOpen, onReconnect, onUndo, onRedo, onCursorBroadcast, onAutosaveConfirm }) {
     this.projectId = projectId;
     this.token = token || localStorage.getItem("token") || null;
     this.onSnapshot = onSnapshot || (() => {});
     this.onOp = onOp || (() => {});
+    this.onAck = onOp || (() => {});
     this.onPresence = onPresence || (() => {});
     this.onJoined = onJoined || (() => {});
     this.onLeft = onLeft || (() => {});
     this.onOpen = onOpen || (() => {});
-    this.reconnectInterval = reconnectInterval;
+    this.onReconnect = onReconnect || (() => {});
+    this.onUndo = onUndo || (() => {});
+    this.onRedo = onRedo || (() => {});
+    this.onCursorBroadcast = onCursorBroadcast || (() => {});
+    this.onAutosaveConfirm = onAutosaveConfirm || (() => {});
 
-    this.outstandingOps = new Map(); // opId -> resolve
-    this.clientId = this.token || this._randomId();
-    this.socket = null;
+    this.pending = {};
+    this._backoff = 1000;
+    this._reconnectTimer = null;
     this._heartbeatTimer = null;
-    this._connected = false;
+    this.socket = null;
 
-    this._connect();
+    this.connect();
   }
 
   _randomId() {
@@ -58,58 +46,163 @@ export default class CollabClient {
     return `${DEFAULT_WS_HOST}/ws/projects/${this.projectId}?token=${t}`;
   }
 
-  _connect() {
+  connect() {
+    this.close();
     const url = this._buildUrl();
-    if (ReconnectingWebSocketLib) {
-      const options = { connectionTimeout: 4000, maxRetries: 1000, maxReconnectionDelay: 10000 };
-      this.socket = new ReconnectingWebSocketLib(url, [], options);
-      this.socket.addEventListener("open", () => this._onopen());
-      this.socket.addEventListener("message", (evt) => this._onmessage(evt));
-      this.socket.addEventListener("close", () => this._onclose());
-      this.socket.addEventListener("error", (e) => console.warn("WS error", e));
-    } else {
-      // fallback: basic WebSocket with naive reconnect
-      this._nativeConnect(url);
-    }
+    this.socket = new WebSocket(url);
+    this.socket.onopen = () => {
+      this._backoff = 1000;
+      this._onopen();
+      this._sendPending();
+    };
+    this.socket.onmessage = (event) => this._onmessage(event);
+    this.socket.onclose = () => this._scheduleReconnect();
+    this.socket.onerror = (e) => {
+      console.warn("WS error", e);
+      this.socket.close();
+    };
   }
 
-  _nativeConnect(url) {
-    try {
-      this.socket = new WebSocket(url);
-    } catch (e) {
-      console.error("WebSocket connect failed:", e);
-      setTimeout(() => this._nativeConnect(url), this.reconnectInterval);
-      return;
-    }
-    this.socket.addEventListener("open", () => this._onopen());
-    this.socket.addEventListener("message", (evt) => this._onmessage(evt));
-    this.socket.addEventListener("close", () => {
-      this._onclose();
-      setTimeout(() => this._nativeConnect(url), this.reconnectInterval);
-    });
-    this.socket.addEventListener("error", (e) => console.warn("WS error", e));
+  _scheduleReconnect() {
+    if (this._reconnectTimer) return;
+    const delay = Math.min(30000, this._backoff);
+    this.onReconnect(delay);
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this._backoff = Math.min(30000, this._backoff * 1.6);
+      this.connect();
+    }, delay);
   }
 
   _onopen() {
-    this._connected = true;
     this.onOpen();
-    // announce join
-    this.send({ type: "join", meta: { clientId: this.clientId } });
-    // start heartbeat
+    this.send({ type: "join" });
     this._startHeartbeat();
   }
 
-  _onclose() {
-    this._connected = false;
-    this._stopHeartbeat();
+  _onmessage(evt) {
+    let msg;
+    try {
+      msg = JSON.parse(evt.data);
+    } catch (e) {
+      return;
+    }
+    
+    // Day 21: Handle PING/PONG heartbeat
+    if (msg.type === "ping") {
+        this.send({ type: "pong", ts: msg.ts });
+        return;
+    }
+    
+    // Day 21: Handle ops_batch
+    if (msg.type === "ops_batch") {
+        // Process each op in the batch
+        msg.ops.forEach(op_record => {
+            this.onOp(op_record);
+        });
+        return;
+    }
+
+    if (msg.type === "ack" && msg.opId && this.pending[msg.opId]) {
+      const p = this.pending[msg.opId];
+      p.resolve && p.resolve(msg);
+      delete this.pending[msg.opId];
+      if (this.onAck) {
+        this.onAck(msg);
+      }
+    } else if (msg.type === "snapshot") {
+      this.onSnapshot(msg.layout, msg.clients);
+    } else if (msg.type === "op") {
+      this.onOp(msg);
+    } else if (msg.type === "presence") {
+      this.onPresence(msg);
+    } else if (msg.type === "joined") {
+      this.onJoined(msg);
+    } else if (msg.type === "left") {
+      this.onLeft(msg);
+    } else if (msg.type === "pong") {
+      // no-op
+    } else if (msg.type === "undo") {
+        this.onUndo(msg);
+    } else if (msg.type === "redo") {
+        this.onRedo(msg);
+    } else if (msg.type === "error") {
+      console.warn("Server error:", msg.msg);
+    } 
+    else if (msg.type === "cursor_broadcast") {
+      this.onCursorBroadcast(msg);
+    } else if (msg.type === "autosave_confirm") {
+      this.onAutosaveConfirm(msg);
+    }
+  }
+
+  _sendPending() {
+    Object.keys(this.pending).forEach((id) => {
+      const p = this.pending[id];
+      if (p && this.socket && this.socket.readyState === WebSocket.OPEN) {
+        const msg = JSON.stringify({ ...p.op, opId: id });
+        this.socket.send(msg);
+        p.queued = false;
+        p.ts = Date.now();
+      }
+    });
+  }
+
+  sendOp(op) {
+    return new Promise((resolve, reject) => {
+      const opId = op.opId || ("op_" + this._randomId());
+      const message = JSON.stringify({ ...op, opId });
+      const attemptSend = () => {
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+          this.socket.send(message);
+          this.pending[opId] = { op, resolve, reject, ts: Date.now(), retries: 0 };
+        } else {
+          this.pending[opId] = { op, resolve, reject, ts: Date.now(), queued: true };
+          this.connect();
+        }
+      };
+      attemptSend();
+    });
+  }
+
+  sendUndo() {
+    this.send({ type: "undo_request" });
+  }
+
+  sendRedo() {
+    this.send({ type: "redo_request" });
+  }
+
+  sendPresence(meta) {
+    this.send({ type: "presence", meta });
+  }
+
+  sendCursorUpdate(cursor) {
+      this.send({ type: "cursor_update", cursor });
+  }
+
+  requestSave() {
+    this.send({ type: "save" });
+  }
+
+  send(raw) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      console.warn("WebSocket not open, ignoring send:", raw);
+      return;
+    }
+    try {
+      this.socket.send(JSON.stringify(raw));
+    } catch (e) {
+      console.warn("Send failed:", e);
+    }
   }
 
   _startHeartbeat() {
     this._stopHeartbeat();
     this._heartbeatTimer = setInterval(() => {
-      try {
-        this.send({ type: "ping" });
-      } catch (e) {}
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        // Client-side sends ping via the server's ping loop (Day 21)
+      }
     }, 20000);
   }
 
@@ -120,94 +213,17 @@ export default class CollabClient {
     }
   }
 
-  _onmessage(evt) {
-    let data;
-    try {
-      data = (typeof evt.data === "string") ? JSON.parse(evt.data) : evt.data;
-    } catch (e) {
-      return;
-    }
-    const t = data.type;
-    if (t === "snapshot") {
-      this.onSnapshot(data.layout || {}, data.clients || []);
-    } else if (t === "op") {
-      // matched an outstanding op?
-      const opId = data.opId;
-      if (opId && this.outstandingOps.has(opId)) {
-        const { resolve } = this.outstandingOps.get(opId);
-        resolve && resolve(data);
-        this.outstandingOps.delete(opId);
-      }
-      this.onOp(data);
-    } else if (t === "presence") {
-      this.onPresence(data);
-    } else if (t === "joined") {
-      this.onJoined(data);
-    } else if (t === "left") {
-      this.onLeft(data);
-    } else if (t === "pong") {
-      // noop
-    } else if (t === "ack") {
-      // generic ack
-    } else if (t === "error") {
-      console.warn("Server error:", data.msg);
-    } else {
-      // unknown types: pass to onOp fallback
-      this.onOp(data);
-    }
-  }
-
-  send(raw) {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      // If ReconnectingWebSocket is used, it will queue automatically; otherwise we ignore.
-      if (this.socket && this.socket.bufferedAmount === 0) {
-        // no-op
-      } else {
-        // ignore if not open
-        console.warn("WebSocket not open, ignoring send:", raw);
-        return;
-      }
-    }
-    try {
-      this.socket.send(JSON.stringify(raw));
-    } catch (e) {
-      console.warn("Send failed:", e);
-    }
-  }
-
-  sendOp(op) {
-    const opId = op.opId || ("op_" + Math.random().toString(36).slice(2,9));
-    const msg = { type: "op", opId, userId: this.clientId, ts: Date.now()/1000, op };
-    return new Promise((resolve, reject) => {
-      // store resolver so when server echoes op with same opId we can resolve
-      this.outstandingOps.set(opId, { op, resolve, reject, sentAt: Date.now() });
-      this.send(msg);
-      // timeout fallback in case server doesn't respond
-      setTimeout(() => {
-        if (this.outstandingOps.has(opId)) {
-          const s = this.outstandingOps.get(opId);
-          this.outstandingOps.delete(opId);
-          // resolve anyway (best-effort)
-          resolve({ timedOut: true, opId });
-        }
-      }, 7000);
-    });
-  }
-
-  sendPresence(cursor) {
-    this.send({ type: "presence", cursor, meta: { clientId: this.clientId } });
-  }
-
-  requestSave() {
-    this.send({ type: "save" });
-  }
-
   close() {
     try {
       this._stopHeartbeat();
       if (this.socket) {
-        try { this.socket.close(); } catch (e) {}
+        this.socket.close();
       }
     } catch (e) {}
+    this.socket = null;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
   }
 }

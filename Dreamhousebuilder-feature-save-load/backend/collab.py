@@ -1,185 +1,219 @@
 # backend/collab.py
-import asyncio
-import json
-import os
-import time
-import uuid
-from typing import Dict, Set, Any
+import asyncio, json, os, time, logging
+from fastapi import WebSocket
+from backend.services.versioning import load_project, persist_project_layout, create_version_from_project
+from backend.utils.metrics import METRICS
 
-from fastapi import WebSocket, WebSocketDisconnect
+logging.basicConfig(level=logging.INFO)
 
-# --- Configuration (adjust to your project) ---
-PROJECT_STORAGE_DIR = os.path.join(os.path.dirname(__file__), "projects")  # where project JSONs live
-os.makedirs(PROJECT_STORAGE_DIR, exist_ok=True)
+ROOT = os.path.dirname(__file__)
+DATA_DIR = os.path.join(ROOT, "data", "projects")
+VERSIONS_DIR = os.path.join(ROOT, "data", "versions")
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(VERSIONS_DIR, exist_ok=True)
 
-# In-memory sessions map: project_id -> ProjectRoom
-PROJECT_ROOMS: Dict[str, "ProjectRoom"] = {}
-ROOMS_LOCK = asyncio.Lock()  # guards PROJECT_ROOMS creation
+# in-memory rooms: project_id -> room dict
+ROOMS = {}
+PING_INTERVAL = 20
+PING_TIMEOUT = 10
+BATCH_INTERVAL = 0.05
 
-def _project_file_path(project_id: str) -> str:
-    return os.path.join(PROJECT_STORAGE_DIR, f"{project_id}.json")
-
-def load_project_layout(project_id: str) -> dict:
-    path = _project_file_path(project_id)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f).get("layout", {"rooms": [], "meta": {}})
-        except Exception:
-            return {"rooms": [], "meta": {}}
-    return {"rooms": [], "meta": {}}
-
-def persist_project_layout(project_id: str, layout: dict) -> None:
-    path = _project_file_path(project_id)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"layout": layout, "savedAt": time.time()}, f, indent=2)
-
-# --- ProjectRoom manages connections + in-memory canonical layout ---
-class ProjectRoom:
-    def __init__(self, project_id: str):
-        self.project_id = project_id
-        self.connections: Set[WebSocket] = set()
-        self.clients_meta: Dict[str, dict] = {}  # userId -> metadata like displayName, lastSeen
-        self.layout = load_project_layout(project_id)
-        self.lock = asyncio.Lock()  # serialize applying ops to layout
-        self.last_ts = time.time()
-
-    async def broadcast(self, message: dict, exclude: WebSocket = None):
-        text = json.dumps(message)
-        stale = []
-        for ws in list(self.connections):
-            if ws is exclude:
-                continue
+async def broadcast_to_room(project_id, message, exclude_ws=None):
+    room = ROOMS.get(project_id, {})
+    clients = list(room.get("clients", {}).values())
+    payload = json.dumps(message)
+    for c in clients:
+        ws = c.get("ws")
+        if ws and ws != exclude_ws:
             try:
-                await ws.send_text(text)
+                await ws.send_text(payload)
             except Exception:
-                # mark stale to remove
-                stale.append(ws)
-        for s in stale:
-            try:
-                self.connections.remove(s)
-            except Exception:
+                # we'll cleanup on next loop
                 pass
 
-# --- helpers to get or create ProjectRoom ---
-async def get_or_create_room(project_id: str) -> ProjectRoom:
-    async with ROOMS_LOCK:
-        if project_id not in PROJECT_ROOMS:
-            PROJECT_ROOMS[project_id] = ProjectRoom(project_id)
-        return PROJECT_ROOMS[project_id]
+async def room_batcher(project_id):
+    room = ROOMS[project_id]
+    while not room.get("_shutdown"):
+        await asyncio.sleep(BATCH_INTERVAL)
+        q = room.get("_broadcast_queue", [])
+        if not q:
+            continue
+        batch = q.copy()
+        room["_broadcast_queue"].clear()
+        await broadcast_to_room(project_id, {"type":"ops_batch", "ops": batch})
 
-# --- apply op (simple per-field LWW semantics) ---
-def apply_op_to_layout(layout: dict, op: dict) -> None:
-    """
-    op examples:
-      { kind: "room:add", room: { name, x, y, size, ... } }
-      { kind: "room:update", room: { name, x?, y?, size?, rotationY?, scale? } }
-      { kind: "room:remove", name: "Room 1" }
-    This function mutates layout in-place.
-    """
-    kind = op.get("kind")
-    if kind == "room:add":
-        room = op.get("room", {})
-        # avoid duplicate names: if exists, ignore (or you could suffix)
-        if not any(r.get("name") == room.get("name") for r in layout.get("rooms", [])):
-            layout.setdefault("rooms", []).append(room)
-    elif kind == "room:remove":
-        name = op.get("name")
-        layout["rooms"] = [r for r in layout.get("rooms", []) if r.get("name") != name]
-    elif kind == "room:update":
-        updated = op.get("room", {})
-        name = updated.get("name")
-        if not name:
-            return
-        for i, r in enumerate(layout.get("rooms", [])):
-            if r.get("name") == name:
-                # merge fields (LWW handled in client by ts — server accepts value and applies straightforwardly)
-                new_room = dict(r)
-                for k, v in updated.items():
-                    if k == "name":
-                        new_room["name"] = v
-                    else:
-                        new_room[k] = v
-                layout["rooms"][i] = new_room
-                return
-        # if not found, treat as add
-        layout.setdefault("rooms", []).append(updated)
-
-# --- WebSocket endpoint handler (call from main.py) ---
-async def websocket_handler(websocket: WebSocket, project_id: str, token: str | None = None):
-    """
-    Accept a websocket connection and manage message loop for a single project room.
-    token is optional and used as userId in development. In prod use a validated JWT.
-    """
+async def websocket_endpoint(websocket: WebSocket, project_id: str):
     await websocket.accept()
-    room = await get_or_create_room(project_id)
-    room.connections.add(websocket)
+    # basic auth/user id from querystring optional
+    qs = websocket.scope.get("query_string", b"").decode()
+    params = dict([p.split("=") for p in qs.split("&") if "=" in p]) if qs else {}
+    user_id = params.get("user", f"user_{int(time.time()*1000)%10000}")
+    username = params.get("username", user_id)
 
-    # treat token as userId if provided; else create a transient one
-    user_id = token or str(uuid.uuid4())
-    # ephemeral displayName
-    display_name = f"User-{user_id[:6]}"
+    # ensure room
+    if project_id not in ROOMS:
+        layout = load_project(project_id) or {"rooms": []}
+        ROOMS[project_id] = {"id": project_id, "layout": layout, "clients": {}, "undo_stack": [], "redo_stack": [], "_broadcast_queue": [], "op_count":0}
+        # start batcher
+        ROOMS[project_id]["_batcher_task"] = asyncio.create_task(room_batcher(project_id))
 
-    # register client meta
-    room.clients_meta[user_id] = {"displayName": display_name, "joinedAt": time.time()}
-    # send snapshot + current presence
-    snapshot_msg = {"type": "snapshot", "layout": room.layout, "clients": list(room.clients_meta.values()), "ts": time.time()}
-    await websocket.send_text(json.dumps(snapshot_msg))
+    room = ROOMS[project_id]
+    room["clients"][user_id] = {"ws": websocket, "user_id": user_id, "username": username, "cursor": None, "last_pong": time.time()}
+    METRICS["active_connections"] += 1
+    logging.info(f"[{project_id}] {username} connected. clients={len(room['clients'])}")
+    # broadcast presence
+    await broadcast_to_room(project_id, {"type":"presence_update", "clients":[{"user_id":c["user_id"], "username":c["username"]} for c in room["clients"].values()]}, exclude_ws=None)
 
-    # notify others about join
-    await room.broadcast({"type": "joined", "userId": user_id, "displayName": display_name}, exclude=websocket)
-
-    try:
-        while True:
-            raw = await websocket.receive_text()
-            data = json.loads(raw)
-            mtype = data.get("type")
-            if mtype == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
-            elif mtype == "presence":
-                # broadcast to others
-                await room.broadcast({
-                    "type": "presence",
-                    "userId": user_id,
-                    "cursor": data.get("cursor"),
-                    "ts": time.time()
-                }, exclude=websocket)
-            elif mtype == "op":
-                op = data.get("op")
-                op_id = data.get("opId") or str(uuid.uuid4())
-                ts = data.get("ts") or time.time()
-                # apply op under lock, update room canonical layout
-                async with room.lock:
-                    apply_op_to_layout(room.layout, op)
-                    room.last_ts = ts
-                # broadcast to all (including origin — client will ack or ignore duplicate)
-                broadcast_msg = {
-                    "type": "op",
-                    "opId": op_id,
-                    "from": user_id,
-                    "ts": ts,
-                    "op": op
-                }
-                await room.broadcast(broadcast_msg, exclude=None)
-            elif mtype == "save":
-                # persist canonical layout to disk
-                async with room.lock:
-                    persist_project_layout(project_id, room.layout)
-                await websocket.send_text(json.dumps({"type": "ack", "what": "save", "ts": time.time()}))
-            else:
-                # unknown message - ignore or reply
-                await websocket.send_text(json.dumps({"type": "error", "msg": f"unknown type {mtype}"}))
-    except WebSocketDisconnect:
-        # remove
+    # start ping loop
+    async def ping_loop():
         try:
-            room.connections.remove(websocket)
-        except Exception:
+            while True:
+                await asyncio.sleep(PING_INTERVAL)
+                try:
+                    await websocket.send_text(json.dumps({"type":"ping","ts": time.time()}))
+                except Exception:
+                    break
+                # timeout check
+                last = room["clients"].get(user_id,{}).get("last_pong",0)
+                if time.time() - last > (PING_INTERVAL + PING_TIMEOUT):
+                    logging.info(f"[{project_id}] client {user_id} timed out, closing")
+                    try:
+                        await websocket.close()
+                    except:
+                        pass
+                    break
+        except asyncio.CancelledError:
             pass
-        if user_id in room.clients_meta:
-            meta = room.clients_meta.pop(user_id, None)
-            await room.broadcast({"type": "left", "userId": user_id, "displayName": display_name})
-        # optional: if no connections left for project, persist and remove room after a timeout
-        if len(room.connections) == 0:
-            # persist immediately (safer)
-            persist_project_layout(project_id, room.layout)
-            # don't remove from PROJECT_ROOMS immediately; can implement timeout cleanup if desired
+
+    ping_task = asyncio.create_task(ping_loop())
+    try:
+        # send initial snapshot
+        await websocket.send_text(json.dumps({"type":"snapshot","layout": room["layout"]}))
+
+        async for raw in websocket.iter_text():
+            try:
+                msg = json.loads(raw)
+            except:
+                continue
+            mtype = msg.get("type")
+            # ping/pong
+            if mtype == "pong":
+                room["clients"][user_id]["last_pong"] = time.time()
+                continue
+            if mtype == "ping":
+                # client ping to server - reply with pong
+                await websocket.send_text(json.dumps({"type":"pong","ts":msg.get("ts")}))
+                continue
+
+            # operation messages
+            if mtype == "op":
+                op = msg.get("op")
+                op_id = op.get("opId") or f"op_{int(time.time()*1000)}"
+                op["opId"] = op_id
+                # apply minimal local apply (the real app should have apply_op logic)
+                # For example support room:add, room:move, room:delete
+                try:
+                    apply_op_to_layout(room["layout"], op)
+                except Exception as e:
+                    logging.exception("apply op failed")
+                # push to undo stack
+                room["undo_stack"].append(op)
+                room["redo_stack"].clear()
+                room["op_count"] = room.get("op_count",0) + 1
+                METRICS["ops_total"] += 1
+                # append to broadcast queue
+                room["_broadcast_queue"].append({"type":"op","op":op,"actor":username})
+                # immediate ack to sender
+                try:
+                    await websocket.send_text(json.dumps({"type":"ack","opId": op_id, "status":"persisted", "ts": time.time()}))
+                except:
+                    pass
+                # autosave/trigger snapshot every 20 ops
+                if room["op_count"] >= 20:
+                    room["op_count"] = 0
+                    persist(project_id=project_id, layout=room["layout"])
+            elif mtype == "undo_request":
+                if room["undo_stack"]:
+                    op_to_undo = room["undo_stack"].pop()
+                    undo_op_in_layout(room["layout"], op_to_undo)
+                    room["redo_stack"].append(op_to_undo)
+                    # broadcast full snapshot for simplicity
+                    await broadcast_to_room(project_id, {"type":"snapshot","layout":room["layout"]})
+                    persist(project_id=project_id, layout=room["layout"])
+            elif mtype == "redo_request":
+                if room["redo_stack"]:
+                    op_to_redo = room["redo_stack"].pop()
+                    apply_op_to_layout(room["layout"], op_to_redo)
+                    room["undo_stack"].append(op_to_redo)
+                    await broadcast_to_room(project_id, {"type":"snapshot","layout":room["layout"]})
+                    persist(project_id=project_id, layout=room["layout"])
+            elif mtype == "cursor_update":
+                room["clients"][user_id]["cursor"] = msg.get("cursor")
+                room["clients"][user_id]["last_pong"] = time.time()
+                await broadcast_to_room(project_id, {"type":"cursor_broadcast","user_id":user_id,"cursor":msg.get("cursor")}, exclude_ws=websocket)
+            elif mtype == "request_versions":
+                # list versions
+                vers = list_versions_for_project(project_id)
+                await websocket.send_text(json.dumps({"type":"versions","versions":vers}))
+            elif mtype == "rollback":
+                version_id = msg.get("version_id")
+                layout = load_version(project_id, version_id)
+                if layout is not None:
+                    room["layout"] = layout
+                    room["undo_stack"].clear()
+                    room["redo_stack"].clear()
+                    await broadcast_to_room(project_id, {"type":"snapshot","layout":layout})
+                    persist(project_id=project_id, layout=layout)
+            # else ignore other types
+    except Exception as e:
+        logging.exception("ws loop error")
+    finally:
+        ping_task.cancel()
+        # cleanup
+        try:
+            del room["clients"][user_id]
+        except:
+            pass
+        METRICS["active_connections"] = max(0, METRICS["active_connections"] - 1)
+        await broadcast_to_room(project_id, {"type":"presence_update", "clients":[{"user_id":c["user_id"], "username":c["username"]} for c in room["clients"].values()]})
+        logging.info(f"[{project_id}] {username} disconnected. clients={len(room['clients'])}")
+
+# ----- helpers: minimal op apply/undo, persistence hooks -----
+def apply_op_to_layout(layout, op):
+    typ = op.get("kind") or op.get("type")
+    if typ == "room:add":
+        room = op.get("room")
+        layout.setdefault("rooms", []).append(room)
+    elif typ == "room:move":
+        rid = op.get("roomId")
+        for r in layout.get("rooms", []):
+            if r.get("id") == rid:
+                r["x"] = op.get("x", r.get("x"))
+                r["y"] = op.get("y", r.get("y"))
+    elif typ == "room:delete":
+        rid = op.get("roomId")
+        layout["rooms"] = [r for r in layout.get("rooms", []) if r.get("id") != rid]
+    # add other op kinds as needed
+
+def undo_op_in_layout(layout, op):
+    typ = op.get("kind") or op.get("type")
+    # implement inverse
+    if typ == "room:add":
+        # remove last added with matching id
+        rid = op.get("room", {}).get("id")
+        layout["rooms"] = [r for r in layout.get("rooms", []) if r.get("id") != rid]
+    elif typ == "room:move":
+        # move must carry previous coords to undo in production; skip for demo
+        pass
+
+# persistence wrappers to use versioning
+def persist(project_id, layout):
+    persist_project_layout(project_id, layout)
+    create_version_from_project(project_id, layout)
+    METRICS["last_snapshot_ts"] = int(time.time())
+
+# version helpers (we import these functions from services/versioning.py in real usage)
+# For list_versions_for_project and load_version we will import from service file.
+
+# we'll import wrappers from service file to avoid circulars
+from backend.services.versioning import list_versions_for_project, load_version

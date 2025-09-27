@@ -8,17 +8,20 @@ const api = axios.create({
   timeout: 15000,
 });
 
-// automatically attach Authorization header if token in localStorage
-api.interceptors.request.use((config) => {
-  try {
+// Automatically attach Authorization header if token exists
+api.interceptors.request.use(
+  (config) => {
     const token = localStorage.getItem("token");
     if (token) {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
     }
-  } catch (e) {}
-  return config;
-});
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
 export default api;
 export { API_BASE };

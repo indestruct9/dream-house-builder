@@ -25,18 +25,19 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const params = { page, limit };
-      if (search !== null) params.q = search;
+      if (search) params.q = search;
       if (mineOnly) params.mine = true;
+
       const res = await api.get("/projects", { params });
-      const data = res.data;
-      setProjects(data.projects || []);
-      setTotal(data.total || 0);
+      setProjects(res.data.projects || []);
+      setTotal(res.data.total || 0);
     } catch (err) {
       console.error("Failed loading projects", err);
       if (err?.response?.status === 401) {
         alert("Please log in to view your projects");
         localStorage.removeItem("token");
         localStorage.removeItem("username");
+        navigate("/login");
       } else {
         alert("Failed to load projects. Check backend.");
       }
@@ -102,13 +103,9 @@ export default function Dashboard() {
   }
 
   function handleLogout() {
-    // call backend logout optionally
-    try {
-      api.post("/logout").catch(() => {});
-    } catch (e) {}
     localStorage.removeItem("token");
     localStorage.removeItem("username");
-    window.location.reload();
+    window.location.href = "/login";
   }
 
   return (
@@ -116,25 +113,23 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Your Designs</h1>
         <div className="flex items-center gap-4">
-          <div>
-            {username ? (
-              <div className="flex items-center gap-2">
-                <div className="text-sm">Signed in as <strong>{username}</strong></div>
-                <button onClick={handleLogout} className="px-3 py-2 bg-red-600 text-white rounded">Logout</button>
-              </div>
-            ) : (
-              <div className="flex gap-2">
-                <button onClick={() => navigate("/login")} className="px-3 py-2 bg-blue-600 text-white rounded">Login</button>
-                <button onClick={() => navigate("/register")} className="px-3 py-2 bg-gray-200 rounded">Register</button>
-              </div>
-            )}
-          </div>
+          {username ? (
+            <div className="flex items-center gap-2">
+              <div className="text-sm">Signed in as <strong>{username}</strong></div>
+              <button onClick={handleLogout} className="px-3 py-2 bg-red-600 text-white rounded">Logout</button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <button onClick={() => navigate("/login")} className="px-3 py-2 bg-blue-600 text-white rounded">Login</button>
+              <button onClick={() => navigate("/signup")} className="px-3 py-2 bg-gray-200 rounded">Register</button>
+            </div>
+          )}
           <button onClick={handleNewProject} className="px-3 py-2 bg-green-600 text-white rounded">+ New Project</button>
         </div>
       </div>
 
       <form onSubmit={onSearchSubmit} className="flex gap-2 mb-4">
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or id..." className="border p-2 rounded w-80" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or ID..." className="border p-2 rounded w-80" />
         <button type="submit" className="px-3 py-2 bg-blue-600 text-white rounded">Search</button>
         <button type="button" onClick={() => { setQ(""); setPage(1); fetchProjects(null); }} className="px-3 py-2 bg-gray-200 rounded">Reset</button>
         <label className="ml-4 flex items-center gap-2">
@@ -165,7 +160,7 @@ export default function Dashboard() {
           {projects.map((p) => (
             <div key={p.id} className="border rounded shadow bg-white overflow-hidden">
               <div style={{ height: 160, background: "#0f1724", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {p.thumbnail ? (
+                {p.thumbnail_url ? (
                   <img
                     src={`${API_BASE}${p.thumbnail_url}`}
                     alt={p.name}

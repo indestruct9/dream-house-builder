@@ -1,10 +1,9 @@
-# backend/main.py
 from fastapi import FastAPI, HTTPException, Query, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from pathlib import Path
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 import json
 import uuid
 import base64
@@ -13,6 +12,11 @@ import hashlib
 import os
 from datetime import datetime
 import asyncio
+import logging
+import time
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
 # Optional Redis async import (for pub/sub across processes)
 try:
@@ -20,7 +24,43 @@ try:
 except Exception:
     aioredis = None
 
-app = FastAPI(title="DreamHouse Backend Day15 (Versions + WebSocket + OpsJournal + Redis)")
+# ---------------------
+# Day 21: Metrics and Atomic Write Utilities
+# ---------------------
+METRICS = {
+  "active_connections": 0,
+  "ops_total": 0,
+  "last_snapshot_ts": 0.0,
+  "batches_total": 0,
+}
+
+def atomic_write_json(path, obj):
+    """Writes JSON content to a path atomically using tempfile + os.replace."""
+    import json, tempfile, os
+    dirpath = os.path.dirname(path)
+    
+    # Ensure directory exists before creating temp file
+    if not os.path.exists(dirpath):
+        os.makedirs(dirpath)
+        
+    with tempfile.NamedTemporaryFile("w", dir=dirpath, delete=False, encoding="utf-8") as tf:
+        json.dump(obj, tf, indent=2)
+        tf.flush()
+        os.fsync(tf.fileno())
+    os.replace(tf.name, path)
+
+    # Update metric for snapshot save
+    if path.name.endswith(".json"):
+        METRICS["last_snapshot_ts"] = time.time()
+
+# ---------------------
+# Day 21: Collaboration Constants
+# ---------------------
+PING_INTERVAL = 20  # sec
+PING_TIMEOUT = 10   # sec
+BATCH_INTERVAL = 0.05 # 50ms
+
+app = FastAPI(title="DreamHouse Backend Day21 (Stability + Metrics)")
 
 # CORS for dev
 app.add_middleware(
@@ -35,7 +75,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 PROJECTS_DIR = DATA_DIR / "projects"
 OPS_DIR = DATA_DIR / "ops"
-VERSIONS_DIR = DATA_DIR / "versions"   # store versions per project here
+VERSIONS_DIR = DATA_DIR / "versions"
 PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
 OPS_DIR.mkdir(parents=True, exist_ok=True)
 VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,7 +84,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 USERS_FILE = DATA_DIR / "users.json"
 TOKENS_FILE = DATA_DIR / "tokens.json"
 
-REDIS_URL = os.getenv("REDIS_URL")  # set to redis://redis:6379 in docker-compose
+REDIS_URL = os.getenv("REDIS_URL")
 REDIS = None
 if REDIS_URL and aioredis:
     try:
@@ -65,7 +105,8 @@ def load_json_safe(path: Path):
         return {}
 
 def write_json_safe(path: Path, data):
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # Day 21: Use atomic write for config files
+    atomic_write_json(path, data)
 
 # ---------------------
 # Auth helpers
@@ -113,6 +154,7 @@ def save_thumbnail(pid: str, thumbnail_b64: str) -> Optional[str]:
         with open(png_path, "wb") as pf:
             pf.write(data)
         return f"{pid}.png"
+    
     except Exception as e:
         print("Failed to decode/save thumbnail:", e)
         return None
@@ -124,8 +166,9 @@ def write_project_file(pid: str, name: str, layout: Dict[str,Any], owner: Option
     if thumb_filename:
         out["thumbnail"] = thumb_filename
     path = PROJECTS_DIR / f"{pid}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(out, f, indent=2)
+    
+    # Day 21: Use atomic write for project file
+    atomic_write_json(path, out)
     return out
 
 def _project_file_path(project_id: str) -> Path:
@@ -135,22 +178,23 @@ def load_project_layout(project_id: str) -> dict:
     path = _project_file_path(project_id)
     if path.exists():
         try:
-            j = json.loads(path.read_text(encoding="utf-8"))
+            j = load_json_safe(path)
             return j.get("layout", {"rooms": [], "meta": {}})
         except Exception:
-            return {"rooms": [], "meta": {}}
+            return {"rooms": [], 
+"meta": {}}
     return {"rooms": [], "meta": {}}
 
 def persist_project_layout(project_id: str, layout: dict):
-    # try preserve name/owner
     path = _project_file_path(project_id)
     if path.exists():
         try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
+            existing = load_json_safe(path)
             name = existing.get("name", project_id)
             owner = existing.get("owner")
         except Exception:
             name = project_id
+  
             owner = None
     else:
         name = project_id
@@ -164,37 +208,40 @@ def append_op_record(project_id: str, record: dict):
     ops_dir = OPS_DIR
     ops_dir.mkdir(parents=True, exist_ok=True)
     fpath = ops_dir / f"{project_id}.log"
+    
+    # Day 21: Increment total ops metric
+    METRICS["ops_total"] += 1
+    
     try:
         with open(fpath, "a", encoding="utf-8") as fh:
+          
             fh.write(json.dumps(record) + "\n")
     except Exception as e:
         print("Failed to append op record:", e)
 
-def replay_ops(project_id: str) -> dict:
-    """Rebuild layout by replaying ops from ops log. Returns reconstructed layout."""
+def replay_ops(project_id: str) -> list:
     fpath = OPS_DIR / f"{project_id}.log"
-    layout = {"rooms": [], "meta": {}}
+    ops = []
     if not fpath.exists():
-        return layout
+        return ops
     try:
         with open(fpath, "r", encoding="utf-8") as fh:
             for line in fh:
+           
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    r = json.loads(line)
-                    op = r.get("op")
-                    if op:
-                        apply_op_to_layout(layout, op)
+                    ops.append(json.loads(line))
                 except Exception:
+  
                     continue
     except Exception as e:
         print("Failed to replay ops:", e)
-    return layout
+    return ops
 
 # ---------------------
-# Version helpers (unchanged from Day12)
+# Version helpers
 # ---------------------
 def project_json_path(pid: str) -> Path:
     return PROJECTS_DIR / f"{pid}.json"
@@ -213,14 +260,19 @@ def create_version_from_project(pid: str) -> Optional[str]:
         return None
     ver_id = uuid.uuid4().hex
     ver_dir = ensure_versions_dir_for_project(pid)
-    with open(jpath, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    
+    # Read data safely (should use atomic_read if available, but for consistency)
+    data = load_json_safe(jpath)
+    
     version_meta = {"id": ver_id, "created": datetime.utcnow().isoformat(), "name": data.get("name")}
     vjson_path = ver_dir / f"{ver_id}.json"
-    with open(vjson_path, "w", encoding="utf-8") as vf:
-        json.dump({"meta": version_meta, "project": data}, vf, indent=2)
+    
+    # Day 21: Use atomic write for version files
+    atomic_write_json(vjson_path, {"meta": version_meta, "project": data})
+    
     png_path = project_png_path(pid)
     if png_path.exists():
+  
         shutil.copyfile(png_path, ver_dir / f"{ver_id}.png")
     return ver_id
 
@@ -233,6 +285,7 @@ def list_versions_for_project(pid: str):
         try:
             j = json.loads(f.read_text(encoding="utf-8"))
             meta = j.get("meta", {})
+       
             vid = meta.get("id") or f.stem
             created = meta.get("created") or datetime.fromtimestamp(f.stat().st_mtime).isoformat()
             has_thumb = (ver_dir / f"{vid}.png").exists()
@@ -245,21 +298,23 @@ def get_version_json(pid: str, vid: str):
     vjson = VERSIONS_DIR / pid / f"{vid}.json"
     if not vjson.exists():
         return None
-    return json.loads(vjson.read_text(encoding="utf-8"))
+    # Fix: Use load_json_safe for consistency
+    return load_json_safe(vjson)
 
 def revert_project_to_version(pid: str, vid: str, owner: Optional[str]=None):
     vjson = VERSIONS_DIR / pid / f"{vid}.json"
     if not vjson.exists():
         return False
-    data = json.loads(vjson.read_text(encoding="utf-8"))
+    data = load_json_safe(vjson)
     project_data = data.get("project")
     if not project_data:
         return False
-    jpath = project_json_path(pid)
-    with open(jpath, "w", encoding="utf-8") as f:
-        if owner:
-            project_data["owner"] = owner
-        json.dump(project_data, f, indent=2)
+    
+    # Use write_project_file which handles atomic write
+    if owner:
+        project_data["owner"] = owner
+    write_project_file(pid, project_data.get("name", pid), project_data.get("layout", {}), owner=project_data.get("owner"))
+
     vthumb = VERSIONS_DIR / pid / f"{vid}.png"
     if vthumb.exists():
         dst = project_png_path(pid)
@@ -279,6 +334,7 @@ class LoginRequest(BaseModel):
 
 class DesignRequest(BaseModel):
     description: Optional[str] = ""
+  
     mood: Optional[str] = "cozy"
     bedrooms: Optional[int] = 2
 
@@ -300,17 +356,58 @@ def username_from_auth_header(authorization: Optional[str]) -> Optional[str]:
     return None
 
 def require_user(authorization: Optional[str]) -> str:
+ 
     username = username_from_auth_header(authorization)
     if not username:
         raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing token")
     return username
 
 # ---------------------
-# REST endpoints (unchanged)
+# REST endpoints
 # ---------------------
 @app.get("/")
 def root():
-    return {"message": "DreamHouse Backend (Day15) running"}
+    return {"message": "DreamHouse Backend (Day21) running"}
+
+@app.get("/healthz")
+async def healthz():
+    ok = {"status": "ok"}
+    try:
+        if REDIS:
+            _ = await REDIS.ping()
+            ok["redis"] = "ok"
+     
+        else:
+            ok["redis"] = "disabled"
+    except Exception as e:
+        ok["redis"] = f"error: {e}"
+    return ok
+
+# Day 21: Metrics endpoint
+@app.get("/metrics", response_class=PlainTextResponse)
+def get_metrics():
+    """
+    Returns Prometheus-compatible metrics.
+    """
+    lines = [
+      f"# HELP dream_active_connections Number of currently open WebSocket connections.",
+      f"# TYPE dream_active_connections gauge",
+      f"dream_active_connections {METRICS['active_connections']}",
+      
+      f"# HELP dream_ops_total Total number of individual operations (op) persisted.",
+      f"# TYPE dream_ops_total counter",
+      f"dream_ops_total {METRICS['ops_total']}",
+      
+      f"# HELP dream_batches_total Total number of operation batches broadcast.",
+      f"# TYPE dream_batches_total counter",
+      f"dream_batches_total {METRICS['batches_total']}",
+      
+      f"# HELP dream_last_snapshot_ts Timestamp of the last project snapshot/version save.",
+      f"# TYPE dream_last_snapshot_ts gauge",
+      f"dream_last_snapshot_ts {METRICS['last_snapshot_ts']}",
+    ]
+    return "\n".join(lines)
+
 
 @app.post("/register")
 def register(req: RegisterRequest):
@@ -335,6 +432,7 @@ def login(req: LoginRequest):
     pwd = req.password.strip()
     user = get_user_by_username(uname)
     if not user:
+       
         raise HTTPException(status_code=401, detail="invalid credentials")
     if user.get("password_hash") != hash_password(uname, pwd):
         raise HTTPException(status_code=401, detail="invalid credentials")
@@ -350,10 +448,10 @@ def logout(authorization: Optional[str] = Header(None)):
     parts = authorization.split()
     if len(parts) == 2:
         token = parts[1]
+        
         delete_token(token)
     return {"status":"ok"}
 
-# ----- Design generator (public) -----
 @app.post("/design")
 def design(req: DesignRequest):
     sizes = {"living": 5.0, "kitchen": 3.5, "bed": 3.5, "bath": 2.0}
@@ -363,11 +461,11 @@ def design(req: DesignRequest):
     for i in range(max(1, int(req.bedrooms or 2))):
         y = (i + 1) * (sizes["bed"] + 0.5)
         rooms.append({"name": f"Bedroom {i+1}", "size": sizes["bed"], "x": 0.0, "y": y})
+       
         rooms.append({"name": f"Bathroom {i+1}", "size": sizes["bath"], "x": sizes["bed"] + 0.5, "y": y})
     meta = {"description": req.description, "mood": req.mood, "bedrooms": req.bedrooms}
     return {"rooms": rooms, "meta": meta}
 
-# ----- Projects (list/view public; save/update/delete protected) -----
 @app.get("/projects")
 def list_projects(
     page: int = Query(1, ge=1),
@@ -379,18 +477,21 @@ def list_projects(
     files = sorted(PROJECTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     items = []
     for f in files:
+        
         try:
-            j = json.loads(f.read_text(encoding="utf-8"))
+            j = load_json_safe(f)
             pid = j.get("id")
             name = j.get("name")
             owner = j.get("owner")
             if q:
                 ql = q.lower()
+             
                 if not (ql in (name or "").lower() or ql in (pid or "").lower() or ql in json.dumps(j.get("layout", "")).lower()):
                     continue
             items.append({
                 "id": pid,
                 "name": name,
+              
                 "owner": owner,
                 "thumbnail": (PROJECTS_DIR / f"{pid}.png").exists(),
                 "thumbnail_url": f"/projects/{pid}/thumbnail" if (PROJECTS_DIR / f"{pid}.png").exists() else None,
@@ -413,10 +514,11 @@ def list_projects(
 
 @app.get("/projects/{project_id}")
 def get_project(project_id: str):
+ 
     path = PROJECTS_DIR / f"{project_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json_safe(path)
 
 @app.get("/projects/{project_id}/thumbnail")
 def get_thumbnail(project_id: str):
@@ -431,6 +533,7 @@ def save_project(req: SaveProjectRequest, authorization: Optional[str] = Header(
     pid = uuid.uuid4().hex
     thumb_name = None
     if req.thumbnail:
+      
         thumb_name = save_thumbnail(pid, req.thumbnail)
     out = write_project_file(pid, req.name, req.layout, owner=username, thumb_filename=thumb_name)
     return {"status": "ok", "id": pid}
@@ -441,10 +544,11 @@ def update_project(project_id: str, req: SaveProjectRequest, authorization: Opti
     path = PROJECTS_DIR / f"{project_id}.json"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    j = json.loads(path.read_text(encoding="utf-8"))
+    j = load_json_safe(path)
     owner = j.get("owner")
     if owner != username:
         raise HTTPException(status_code=403, detail="Forbidden: you do not own this project")
+  
     create_version_from_project(project_id)
     thumb_name = None
     if req.thumbnail:
@@ -458,9 +562,10 @@ def delete_project(project_id: str, authorization: Optional[str] = Header(None))
     jpath = PROJECTS_DIR / f"{project_id}.json"
     if not jpath.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    j = json.loads(jpath.read_text(encoding="utf-8"))
+    j = load_json_safe(jpath)
     owner = j.get("owner")
     if owner != username:
+ 
         raise HTTPException(status_code=403, detail="Forbidden: you do not own this project")
     ppath = PROJECTS_DIR / f"{project_id}.png"
     try:
@@ -471,6 +576,7 @@ def delete_project(project_id: str, authorization: Optional[str] = Header(None))
         try:
             ppath.unlink()
         except Exception as e:
+       
             return JSONResponse(status_code=500, content={"detail": f"Deleted json but failed to delete thumbnail: {e}"})
     return {"status": "deleted", "id": project_id}
 
@@ -481,7 +587,7 @@ def duplicate_project(project_id: str, authorization: Optional[str] = Header(Non
     if not src.exists():
         raise HTTPException(status_code=404, detail="Source project not found")
     try:
-        j = json.loads(src.read_text(encoding="utf-8"))
+        j = load_json_safe(src)
         new_id = uuid.uuid4().hex
         name = j.get("name", "") + " (copy)"
         layout = j.get("layout", {})
@@ -492,6 +598,7 @@ def duplicate_project(project_id: str, authorization: Optional[str] = Header(Non
             shutil.copyfile(src_thumb, dst_thumb)
             thumb_name = f"{new_id}.png"
         write_project_file(new_id, name, layout, owner=username, thumb_filename=thumb_name)
+   
         return {"status": "duplicated", "id": new_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to duplicate: {e}")
@@ -522,33 +629,172 @@ def revert_version(project_id: str, version_id: str, authorization: Optional[str
     jpath = PROJECTS_DIR / f"{project_id}.json"
     if not jpath.exists():
         raise HTTPException(status_code=404, detail="Project not found")
-    j = json.loads(jpath.read_text(encoding="utf-8"))
+    j = load_json_safe(jpath)
     owner = j.get("owner")
     if owner != username:
         raise HTTPException(status_code=403, detail="Forbidden: not your project")
-    ok = revert_project_to_version(project_id, version_id, owner=username)
+    ok = revert_project_to_version(project_id, 
+        version_id, owner=username)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to revert to version")
     return {"status": "reverted", "id": project_id, "version": version_id}
+
+@app.post("/projects/{project_id}/undo")
+async def undo_project_op(project_id: str):
+    room = PROJECT_ROOMS.get(project_id)
+    if not room or not room.get("undo_stack"):
+        raise HTTPException(status_code=400, detail="Nothing to undo")
+    
+    async with room["lock"]:
+        op_to_undo = room["undo_stack"].pop()
+        room.setdefault("redo_stack", []).append(op_to_undo)
+        rebuild_layout_from_ops(project_id, room)
+ 
+        persist_project_layout(project_id, room["layout"])
+        logging.info(f"[{project_id}] REST API triggered undo for op: {op_to_undo.get('opId')}")
+        
+    undo_msg = {"type": "undo", "opId": op_to_undo.get("opId"), "from": "server", "ts": datetime.utcnow().isoformat()}
+    await _redis_publish(project_id, undo_msg)
+    return {"status": "ok", "undone_op": op_to_undo}
+
+@app.post("/projects/{project_id}/redo")
+async def redo_project_op(project_id: str):
+    room = PROJECT_ROOMS.get(project_id)
+    if not room or not room.get("redo_stack"):
+        raise HTTPException(status_code=400, detail="Nothing to redo")
+    
+    async with room["lock"]:
+  
+        op_to_redo = room["redo_stack"].pop()
+        apply_op_to_layout(room["layout"], op_to_redo.get("op"))
+        room.setdefault("undo_stack", []).append(op_to_redo)
+        persist_project_layout(project_id, room["layout"])
+        logging.info(f"[{project_id}] REST API triggered redo for op: {op_to_redo.get('opId')}")
+    
+    redo_msg = {"type": "redo", "opId": op_to_redo.get("opId"), "from": "server", "ts": datetime.utcnow().isoformat()}
+    await _redis_publish(project_id, redo_msg)
+    return {"status": "ok", "redone_op": op_to_redo}
+
+# Day 20: New Rollback Endpoint
+@app.post("/projects/{project_id}/rollback/{version_id}")
+async def rollback_project(project_id: str, version_id: str):
+    j = get_version_json(project_id, version_id)
+  
+    if not j or not j.get("project"):
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    layout_to_restore = j["project"]["layout"]
+    
+    room = PROJECT_ROOMS.get(project_id)
+    if not room:
+        room = get_or_create_room(project_id)
+
+    async with room["lock"]:
+        room["layout"] = layout_to_restore
+        room["undo_stack"] = []
+        room["redo_stack"] = []
+        persist_project_layout(project_id, 
+            room["layout"])
+    
+    # Broadcast snapshot to all clients
+    snapshot_msg = {
+        "type": "snapshot",
+        "layout": room["layout"],
+        "clients": list(room["clients_meta"].values()),
+        "ts": datetime.utcnow().isoformat()
+    }
+    await _redis_publish(project_id, snapshot_msg)
+    return {"status": "ok", "version_id": version_id}
+
+@app.get("/projects/{project_id}/ops/recent")
+async def get_recent_ops(project_id: str, count: int = 10):
+    ops_path = OPS_DIR / f"{project_id}.log"
+    if not ops_path.exists():
+      
+        return {"ops": []}
+    
+    ops = []
+    with open(ops_path, 'r') as f:
+        lines = f.readlines()
+        
+    for line in lines[-count:]:
+        try:
+            ops.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+            
+    
+    return {"ops": ops[::-1]}
+
+def rebuild_layout_from_ops(project_id: str, room: dict):
+    room["layout"] = {"rooms": [], "meta": {}}
+    for op_record in room["undo_stack"]:
+        apply_op_to_layout(room["layout"], op_record.get("op"))
 
 # ---------------------
 # In-memory rooms for WS (multi-room)
 # ---------------------
 PROJECT_ROOMS: Dict[str, Dict[str, Any]] = {}
 SUBSCRIBE_TASKS: Dict[str, asyncio.Task] = {}
+AUTOSAVE_INTERVAL_SECONDS = 30
+AUTOSAVE_TASKS = {}
 
 def get_or_create_room(project_id: str) -> Dict[str, Any]:
     if project_id not in PROJECT_ROOMS:
         PROJECT_ROOMS[project_id] = {
-            "connections": set(),
+            # Day 21: Change connections from set to dict for heartbeat tracking
+            "connections": {}, # Key: user_id, Value: {"ws": websocket, "last_pong": time.time()}
+         
             "clients_meta": {},
             "layout": load_project_layout(project_id),
             "lock": asyncio.Lock(),
+            "undo_stack": replay_ops(project_id),
+            "redo_stack": [],
+            "last_saved_at": time.time(),
+            # Day 21: Batch buffer
+            "_broadcast_queue": [], 
+            "_batcher_task": None,
+            "id": project_id # Added for batcher loop reference
         }
+        # Day 21: Start batcher task if it's not running
+        room = PROJECT_ROOMS[project_id]
+        if not room["_batcher_task"]:
+            room["_batcher_task"] = asyncio.create_task(batcher_loop(room))
     return PROJECT_ROOMS[project_id]
 
+# Day 21: Batcher loop (defined here for scope)
+async def batcher_loop(room: dict):
+    project_id = room["id"]
+    try:
+        while True:
+            await asyncio.sleep(BATCH_INTERVAL)
+            
+            if not room.get("_broadcast_queue"):
+                continue
+            
+            to_send = room["_broadcast_queue"].copy()
+            room["_broadcast_queue"].clear()
+            
+            if not to_send:
+                continue
+
+            batch_msg = {"type":"ops_batch","ops": to_send, "ts": datetime.utcnow().isoformat()}
+            
+            # Broadcast aggregated ops via Redis
+            await _redis_publish(project_id, batch_msg)
+            
+            METRICS["batches_total"] += 1
+
+    except asyncio.CancelledError:
+        logging.info(f"[{project_id}] Batcher loop cancelled.")
+    except Exception as e:
+        logging.error(f"[{project_id}] Batcher loop error: {e}")
+    finally:
+        room["_batcher_task"] = None
+
+
 # ---------------------
-# Apply op to layout (same logic used by replay)
+# Apply op to layout
 # ---------------------
 def apply_op_to_layout(layout: dict, op: dict) -> None:
     if not layout:
@@ -560,7 +806,8 @@ def apply_op_to_layout(layout: dict, op: dict) -> None:
             layout.setdefault("rooms", []).append(room)
     elif kind == "room:remove":
         name = op.get("name")
-        layout["rooms"] = [r for r in layout.get("rooms", []) if r.get("name") != name]
+        layout["rooms"] = [r for r in layout.get("rooms", []) 
+            if r.get("name") != name]
     elif kind == "room:update":
         updated = op.get("room", {})
         name = updated.get("name")
@@ -569,21 +816,21 @@ def apply_op_to_layout(layout: dict, op: dict) -> None:
         found = False
         for i, r in enumerate(layout.get("rooms", [])):
             if r.get("name") == name:
+         
                 new_room = dict(r)
                 for k, v in updated.items():
                     new_room[k] = v
                 layout["rooms"][i] = new_room
                 found = True
+             
                 break
         if not found:
             layout.setdefault("rooms", []).append(updated)
-    # else ignore unknown kinds
 
 # ---------------------
 # Redis pub/sub subscriber loop
 # ---------------------
 async def _redis_subscriber_loop(project_id: str):
-    """Subscribe to Redis channel project:{project_id} and forward messages to local connections."""
     if not REDIS:
         return
     channel = f"project:{project_id}"
@@ -591,8 +838,8 @@ async def _redis_subscriber_loop(project_id: str):
     await pubsub.subscribe(channel)
     try:
         while True:
-            # get_message returns dict or None
             try:
+         
                 msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if msg and msg.get("type") == "message":
                     data_raw = msg.get("data")
@@ -602,15 +849,21 @@ async def _redis_subscriber_loop(project_id: str):
                         continue
                     room = PROJECT_ROOMS.get(project_id)
                     if not room:
+           
                         continue
                     stale = []
-                    for conn in list(room["connections"]):
+                    
+                    # Day 21: Iterate over connection values (websockets)
+                    for client_data in list(room["connections"].values()):
                         try:
-                            await conn.send_json(data)
+                  
+                            await client_data["ws"].send_json(data)
                         except Exception:
-                            stale.append(conn)
-                    for sconn in stale:
-                        room["connections"].discard(sconn)
+                            # Use user_id to identify stale connections
+                            stale.append(client_data["ws"])
+                            
+                    # Cleanup logic is primarily handled by ping loop/finally block
+
                 await asyncio.sleep(0.01)
             except asyncio.CancelledError:
                 break
@@ -618,6 +871,7 @@ async def _redis_subscriber_loop(project_id: str):
                 await asyncio.sleep(0.1)
     finally:
         try:
+ 
             await pubsub.unsubscribe(channel)
         except Exception:
             pass
@@ -636,162 +890,409 @@ async def _redis_publish(project_id: str, message: dict):
         print("redis publish failed:", e)
 
 # ---------------------
+# Day 20: Autosave Loop
+# ---------------------
+async def _autosave_loop(project_id: str):
+    room = PROJECT_ROOMS.get(project_id)
+    if not room:
+        return
+    
+    while True:
+        await asyncio.sleep(AUTOSAVE_INTERVAL_SECONDS)
+        now = time.time()
+        
+   
+        if len(room["connections"]) > 0:
+            async with room["lock"]:
+                if now - room.get("last_saved_at", now) >= AUTOSAVE_INTERVAL_SECONDS:
+                    try:
+                        persist_project_layout(project_id, room["layout"])
+           
+                        create_version_from_project(project_id)
+                        room["last_saved_at"] = now
+                        logging.info(f"[{project_id}] Autosaved project and created version.")
+                    except Exception as e:
+         
+                        logging.error(f"[{project_id}] Failed to autosave: {e}")
+                    
+                    # Broadcast confirmation
+                    try:
+                   
+                        await _redis_publish(project_id, {"type": "autosave_confirm", "ts": datetime.utcnow().isoformat()})
+                    except Exception:
+                        pass
+        else:
+            # If no connections, no need to keep the autosave loop running
+            break
+  
+           
+
+# ---------------------
+# Day16: Presence cleanup loop and settings
+# ---------------------
+PRESENCE_TTL = 30
+PRESENCE_CLEAN_INTERVAL = 5
+
+async def _presence_cleanup_loop():
+    try:
+        while True:
+            now_ts = datetime.utcnow().timestamp()
+            for project_id, room in list(PROJECT_ROOMS.items()):
+                to_remove: List[str] = []
+              
+                for uid, meta in list(room["clients_meta"].items()):
+                    try:
+                        last_seen = float(meta.get("lastSeen", 0))
+                    except Exception:
+                        last_seen = 0
+                    if (now_ts - last_seen) > PRESENCE_TTL:
+                        to_remove.append(uid)
+
+                if to_remove:
+                    for uid in to_remove:
+           
+                        room["clients_meta"].pop(uid, None)
+                        left_msg = {"type": "left", "userId": uid, "ts": datetime.utcnow().isoformat()}
+                        
+                        # Day 21: Iterate over connection values (websockets)
+                        for client_data in list(room["connections"].values()):
+                            try:
+  
+                                await client_data["ws"].send_json(left_msg)
+                            except Exception:
+                                # Connection error will be handled by ping loop / finally block
+                                pass
+                        
+                        try:
+                            await _redis_publish(project_id, left_msg)
+                        except Exception:
+                            pass
+            await asyncio.sleep(PRESENCE_CLEAN_INTERVAL)
+    except asyncio.CancelledError:
+        return
+
+@app.on_event("startup")
+async def _startup_tasks():
+    app.state._presence_cleanup_task = asyncio.create_task(_presence_cleanup_loop())
+
+@app.on_event("shutdown")
+async def _shutdown_tasks():
+    task = getattr(app.state, "_presence_cleanup_task", None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except Exception:
+            pass
+    for task in AUTOSAVE_TASKS.values():
+        task.cancel()
+    
+        try:
+            await task
+        except Exception:
+            pass
+    
+    # Day 21: Cancel batcher tasks on shutdown
+    for room in PROJECT_ROOMS.values():
+        if room.get("_batcher_task"):
+            room["_batcher_task"].cancel()
+            try:
+                await room["_batcher_task"]
+            except Exception:
+                pass
+
+
+# ---------------------
 # WebSocket endpoint for projects
 # ---------------------
+MAX_OP_SIZE = 10_000
 @app.websocket("/ws/projects/{project_id}")
 async def project_ws(websocket: WebSocket, project_id: str, token: Optional[str] = Query(None)):
-    """
-    WebSocket endpoint:
-      ws://host:port/ws/projects/{project_id}?token=<token>
-    token is optional for dev but will be validated if provided.
-    """
     await websocket.accept()
     room = get_or_create_room(project_id)
-    room["connections"].add(websocket)
 
-    # start redis subscriber loop for this project if needed
+    # Day 21: Metrics: increment active connections
+    METRICS["active_connections"] += 1
+    
     if REDIS and project_id not in SUBSCRIBE_TASKS:
         SUBSCRIBE_TASKS[project_id] = asyncio.create_task(_redis_subscriber_loop(project_id))
+    
+    # Day 20: Start autosave loop if it's not already running
+    if project_id not in AUTOSAVE_TASKS:
+        AUTOSAVE_TASKS[project_id] = asyncio.create_task(_autosave_loop(project_id))
 
-    # derive user id
     username = None
     if token:
         username = get_username_for_token(token)
     user_id = username or str(uuid.uuid4())
     display_name = username or f"Guest-{user_id[:6]}"
 
-    room["clients_meta"][user_id] = {"userId": user_id, "displayName": display_name, "joinedAt": datetime.utcnow().isoformat()}
+    # Day 21: Initialize client connection data with last_pong
+    room["connections"][user_id] = {"ws": websocket, "last_pong": time.time()}
 
-    # send initial snapshot (canonical layout)
+    room["clients_meta"][user_id] = {
+        "userId": user_id,
+        "displayName": display_name,
+        "joinedAt": datetime.utcnow().isoformat(),
+    
+        "lastSeen": datetime.utcnow().timestamp(),
+    }
+
     try:
+        # Client list is from clients_meta (presence tracking)
         await websocket.send_json({"type": "snapshot", "layout": room["layout"], "clients": list(room["clients_meta"].values()), "ts": datetime.utcnow().isoformat()})
     except Exception as ex:
         print("Failed to send snapshot:", ex)
+    
+    # Day 21: Ping Loop (Heartbeat)
+    async def ping_loop():
+        try:
+            while True:
+                await asyncio.sleep(PING_INTERVAL)
+                try:
+                    await websocket.send_json({"type":"ping", "ts": time.time()})
+                except Exception:
+                    logging.warning(f"[{project_id}] Failed to send ping to {user_id}, closing ws")
+                    break
+                
+                last_pong = room["connections"].get(user_id, {}).get("last_pong", 0)
+                if time.time() - last_pong > (PING_INTERVAL + PING_TIMEOUT):
+                    logging.info(f"[{project_id}] Client {user_id} timed out (no pong received)")
+                    await websocket.close()
+                    break
+        except asyncio.CancelledError:
+            pass
 
-    # broadcast joined to others
+    ping_task = asyncio.create_task(ping_loop())
+    
     join_msg = {"type": "joined", "userId": user_id, "displayName": display_name, "ts": datetime.utcnow().isoformat()}
-    stale = []
-    for conn in list(room["connections"]):
-        if conn is websocket:
+    
+    # Day 21: Broadcast to other clients (non-stale logic relies on ping loop / finally block)
+    for client_data in list(room["connections"].values()):
+        if client_data["ws"] is websocket:
             continue
         try:
-            await conn.send_json(join_msg)
+            await client_data["ws"].send_json(join_msg)
         except Exception:
-            stale.append(conn)
-    for s in stale:
-        room["connections"].discard(s)
+            pass
+            
+    try:
+        await _redis_publish(project_id, join_msg)
+    except Exception:
+        pass
 
     try:
         while True:
+      
             raw = await websocket.receive_text()
+            if len(raw) > MAX_OP_SIZE:
+                await websocket.send_json({"type":"error","msg":"op too large"})
+                continue
             try:
                 data = json.loads(raw)
+           
             except Exception:
                 continue
 
             mtype = data.get("type")
-            if mtype == "ping":
+            if mtype == "pong":
+                # Day 21: Update last_pong time
+                if user_id in room["connections"]:
+                    room["connections"][user_id]["last_pong"] = time.time()
+
+            elif mtype == "ping":
+                try:
+                    room["clients_meta"].setdefault(user_id, {})["lastSeen"] = datetime.utcnow().timestamp()
+              
+                except Exception:
+                    pass
                 await websocket.send_json({"type": "pong", "ts": datetime.utcnow().isoformat()})
+
             elif mtype == "presence":
-                # broadcast presence to others
-                presence_msg = {"type": "presence", "userId": user_id, "cursor": data.get("cursor"), "meta": data.get("meta"), "ts": datetime.utcnow().isoformat()}
-                # apply to clients_meta
-                meta = room["clients_meta"].get(user_id, {})
-                if data.get("meta"):
-                    meta.update(data.get("meta"))
-                    room["clients_meta"][user_id] = meta
-                # broadcast locally
-                stale = []
-                for conn in list(room["connections"]):
-                    if conn is websocket:
+                meta = data.get("meta", {})
+  
+                if meta:
+                    try:
+                        room["clients_meta"].setdefault(user_id, {}).update(meta)
+                    except Exception:
+              
+                        pass
+                room["clients_meta"].setdefault(user_id, {})["lastSeen"] = datetime.utcnow().timestamp()
+
+                
+            elif mtype == "cursor_update":
+                cursor = data.get("cursor")
+                if cursor:
+                    room["clients_meta"].setdefault(user_id, {})["cursor"] = cursor
+                room["clients_meta"].setdefault(user_id, {})["lastSeen"] = datetime.utcnow().timestamp()
+                
+                cursor_msg = {"type": "cursor_broadcast", "userId": user_id, "cursor": cursor, "ts": datetime.utcnow().isoformat()}
+                
+                # Day 21: Broadcast cursor updates
+                for client_data in list(room["connections"].values()):
+                    if client_data["ws"] is websocket:
                         continue
                     try:
-                        await conn.send_json(presence_msg)
+                        await client_data["ws"].send_json(cursor_msg)
                     except Exception:
-                        stale.append(conn)
-                for s in stale:
-                    room["connections"].discard(s)
-                # publish to redis for remote workers
-                await _redis_publish(project_id, presence_msg)
+                        pass # Failure handled by ping loop
+
+                try:
+                    await _redis_publish(project_id, cursor_msg)
+       
+                except Exception:
+                    pass
+
             elif mtype == "op":
                 op = data.get("op")
                 op_id = data.get("opId") or str(uuid.uuid4())
                 ts = data.get("ts") or datetime.utcnow().isoformat()
-                # append op record
                 op_record = {"opId": op_id, "from": user_id, "ts": ts, "op": op}
+                
+                logging.info(f"[{project_id}] User {user_id} performed op: {op.get('kind')} id={op_id}")
+                
                 try:
+  
                     append_op_record(project_id, op_record)
                 except Exception as ex:
                     print("append op failed:", ex)
-                # apply under lock
+                
                 async with room["lock"]:
+     
                     apply_op_to_layout(room["layout"], op)
+                    room.setdefault("undo_stack", []).append(op_record)
+                    room["redo_stack"] = []
                     try:
+                     
                         persist_project_layout(project_id, room["layout"])
                     except Exception as ex:
                         print("persist failed after op:", ex)
-                # broadcast op to all local conns
-                broadcast_msg = {"type": "op", "opId": op_id, "from": user_id, "ts": ts, "op": op}
-                stale = []
-                for conn in list(room["connections"]):
-                    try:
-                        await conn.send_json(broadcast_msg)
-                    except Exception:
-                        stale.append(conn)
-                for s in stale:
-                    room["connections"].discard(s)
-                # publish to redis so other workers forward to their local sockets
-                await _redis_publish(project_id, broadcast_msg)
+                
+                # ACK immediately to sender
+                try:
+             
+                    await websocket.send_json({"type": "ack", "opId": op_id, "status": "persisted", "ts": datetime.utcnow().isoformat()})
+                except Exception:
+                    pass
+                
+                # Day 21: Add op to batch queue instead of immediate broadcast
+                room.setdefault("_broadcast_queue", []).append(op_record)
+
+            
+            elif mtype == "undo_request":
+                async with room["lock"]:
+                   
+                    if not room["undo_stack"]:
+                        await websocket.send_json({"type": "error", "msg": "Nothing to undo"})
+                        continue
+                    op_to_undo = room["undo_stack"].pop()
+                    room.setdefault("redo_stack", 
+                        []).append(op_to_undo)
+                    rebuild_layout_from_ops(project_id, room)
+                    persist_project_layout(project_id, room["layout"])
+                    logging.info(f"[{project_id}] User {user_id} triggered undo for op: {op_to_undo.get('opId')}")
+                
+               
+                undo_msg = {"type": "undo", "opId": op_to_undo.get("opId"), "from": user_id, "ts": datetime.utcnow().isoformat()}
+                await _redis_publish(project_id, undo_msg)
+
+            elif mtype == "redo_request":
+                async with room["lock"]:
+                    if not room["redo_stack"]:
+                 
+                        await websocket.send_json({"type": "error", "msg": "Nothing to redo"})
+                        continue
+                    op_to_redo = room["redo_stack"].pop()
+                    apply_op_to_layout(room["layout"], op_to_redo.get("op"))
+                    
+                    room.setdefault("undo_stack", []).append(op_to_redo)
+                    persist_project_layout(project_id, room["layout"])
+                    logging.info(f"[{project_id}] User {user_id} triggered redo for op: {op_to_redo.get('opId')}")
+                
+                redo_msg = {"type": "redo", "opId": op_to_redo.get("opId"), "from": user_id, "ts": datetime.utcnow().isoformat()}
+          
+                await _redis_publish(project_id, redo_msg)
+
             elif mtype == "save":
-                # explicit save request
                 async with room["lock"]:
                     try:
                         persist_project_layout(project_id, room["layout"])
+              
                         await websocket.send_json({"type": "ack", "what": "save", "ts": datetime.utcnow().isoformat()})
                     except Exception as ex:
                         await websocket.send_json({"type": "error", "msg": f"save failed: {ex}"})
+
             elif mtype == "join":
-                # client sends extra metadata upon join
+                
                 meta = data.get("meta", {})
-                room["clients_meta"].setdefault(user_id, {}).update(meta)
+                if meta:
+                    try:
+                        room["clients_meta"].setdefault(user_id, {}).update(meta)
+                    except Exception:
+              
+                        pass
+                try:
+                    room["clients_meta"].setdefault(user_id, {})["lastSeen"] = datetime.utcnow().timestamp()
+                except Exception:
+                    pass
+
             else:
-                # unknown type -> ignore
+  
                 try:
                     await websocket.send_json({"type": "error", "msg": f"unknown type {mtype}"})
                 except Exception:
                     pass
 
     except WebSocketDisconnect:
-        # cleanup
+        pass
+    finally:
+        # Day 21: Cancel ping task on disconnect
+        ping_task.cancel()
+        
+        # Day 21: Remove client from connections and update metrics
+        if user_id in room["connections"]:
+            room["connections"].pop(user_id, None)
+            METRICS["active_connections"] -= 1
+
         try:
-            room["connections"].discard(websocket)
+            room["clients_meta"].pop(user_id, None)
         except Exception:
             pass
-        room["clients_meta"].pop(user_id, None)
-        left_msg = {"type": "left", "userId": user_id, "displayName": display_name, "ts": datetime.utcnow().isoformat()}
-        stale = []
-        for conn in list(room["connections"]):
-            try:
-                await conn.send_json(left_msg)
-            except Exception:
-                stale.append(conn)
-        for s in stale:
-            room["connections"].discard(s)
 
-        # if no connections left, persist and optionally cleanup
+        left_msg = {"type": "left", "userId": user_id, "displayName": display_name, "ts": datetime.utcnow().isoformat()}
+        
+        # Broadcast leave message to remaining clients
+        for client_data in list(room["connections"].values()):
+            try:
+                await client_data["ws"].send_json(left_msg)
+            except Exception:
+                pass
+
+        try:
+            await _redis_publish(project_id, left_msg)
+        except Exception:
+            pass
+
         if len(room["connections"]) == 0:
             try:
                 persist_project_layout(project_id, room["layout"])
             except Exception as ex:
                 print("Failed to persist layout on empty room:", ex)
-            # optionally cancel redis subscriber when no more local conns
+            
+            # Cancel tasks if the room is empty
             if project_id in SUBSCRIBE_TASKS:
                 task = SUBSCRIBE_TASKS.pop(project_id, None)
                 if task:
+                    task.cancel()
+            if project_id in AUTOSAVE_TASKS:
+                task = AUTOSAVE_TASKS.pop(project_id, None)
+                if task:
+    
                     try:
                         task.cancel()
                     except Exception:
                         pass
-        return
-
-# End of file
+            
+            # Day 21: Cancel batcher task if room is empty
+            if room.get("_batcher_task"):
+                 room["_batcher_task"].cancel()
