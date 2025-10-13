@@ -22,102 +22,122 @@
     id: "day17-panel-root",
     style: {
       position: "fixed",
-      left: "18px",
-      bottom: "18px",
-      width: "360px",
-      maxHeight: "70vh",
-      overflow: "auto",
-      background: "#fffafc",
-      border: "1px solid rgba(0,0,0,0.06)",
-      borderRadius: "10px",
-      padding: "12px",
+      top: "70px",
+      right: "20px",
+      display: "flex",
+      gap: "8px",
+      background: "var(--card)",
+      borderRadius: "8px",
+      padding: "8px 12px",
       zIndex: 100001,
       fontFamily: "Inter, Arial, sans-serif",
       fontSize: "13px",
-      color: "#0b1723",
-      boxShadow: "0 10px 30px rgba(0,0,0,0.08)"
+      boxShadow: "0 2px 8px rgba(0,0,0,0.1)"
     }
   });
-  const header = createEl("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" } });
-  const title = createEl("div", { text: "Day17 • Dashboard", style: { fontWeight: 800 } });
-  const hideBtn = createEl("button", { text: "−", style: { border: "none", background: "transparent", cursor: "pointer", fontSize: "18px" } });
-  const toggleBtn = createEl("button", { text: "✕", style: { border: "none", background: "transparent", cursor: "pointer", fontSize: "14px" } });
-  hideBtn.onclick = () => {
-    const body = document.getElementById("day17-body");
-    if (body) {
-      body.style.display = body.style.display === "none" ? "block" : "none";
-      hideBtn.textContent = body.style.display === "none" ? "+" : "−";
+  // No header - converting to buttons
+  // Create buttons with consistent styling
+  const dashboardBtn = createEl("button", {
+    text: "Open Dashboard",
+    style: {
+      padding: "8px 16px",
+      margin: "4px",
+      borderRadius: "4px",
+      border: "1px solid #e5e7eb",
+      background: "#fff",
+      color: "#1f2937",
+      fontSize: "14px",
+      cursor: "pointer"
+    }
+  });
+
+  const loadBtn = createEl("button", {
+    text: "Load projectId",
+    style: {
+      padding: "8px 16px",
+      margin: "4px",
+      borderRadius: "4px",
+      border: "1px solid #e5e7eb",
+      background: "#fff",
+      color: "#1f2937",
+      fontSize: "14px",
+      cursor: "pointer"
+    }
+  });
+
+  const logoutBtn = createEl("button", {
+    text: "Logout",
+    style: {
+      padding: "8px 16px",
+      margin: "4px",
+      borderRadius: "4px",
+      border: "1px solid #e5e7eb",
+      background: "#fff",
+      color: "#1f2937",
+      fontSize: "14px",
+      cursor: "pointer"
+    }
+  });
+
+  const helpBtn = createEl("button", {
+    text: "Help",
+    style: {
+      padding: "8px 16px",
+      margin: "4px",
+      borderRadius: "4px",
+      border: "1px solid #e5e7eb",
+      background: "#fff",
+      color: "#1f2937",
+      fontSize: "14px",
+      cursor: "pointer"
+    }
+  });
+
+  myProjectsBtn.onclick = () => {
+    localStorage.removeItem('loadedLayout');
+    localStorage.removeItem('loadedProjectId');
+    window.location.href = '/editor';
+  };
+
+  dashboardBtn.onclick = () => window.location.reload();
+
+  loadBtn.onclick = () => {
+    const id = prompt('Enter projectId to load:');
+    if (id) {
+      localStorage.setItem('loadedProjectId', id);
+      window.location.href = '/editor';
     }
   };
-  toggleBtn.onclick = () => {
-    root.style.display = "none";
-  };
-  header.appendChild(title);
-  const hRight = createEl("div", { style: { display: "flex", gap: "8px", alignItems: "center" } });
-  hRight.appendChild(hideBtn);
-  hRight.appendChild(toggleBtn);
-  header.appendChild(hRight);
-  // Body
-  const body = createEl("div", { id: "day17-body", style: { display: "block" } });
-  // Auth info
-  const authRow = createEl("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginBottom: "8px" } });
-  const userSpan = createEl("div", { id: "day17-user", text: "Not logged in", style: { fontWeight: 600, flex: "1" } });
-  const loginBtn = createEl("button", { text: "Login", style: { padding: "6px 8px", borderRadius: "6px", border: "none", background: "#2563eb", color: "#fff", cursor: "pointer" } });
-  const logoutBtn = createEl("button", { text: "Logout", style: { padding: "6px 8px", borderRadius: "6px", border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", display: "none" } });
-  loginBtn.onclick = () => {
-    window.location.href = "/login";
-  };
-  logoutBtn.onclick = async () => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      alert("No active session.");
-      return;
-    }
-    try {
-      await fetch("/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(()=>{});
-    } catch(e){}
-    localStorage.removeItem("token");
-    userSpan.textContent = "Not logged in";
-    loginBtn.style.display = "";
-    logoutBtn.style.display = "none";
-    renderProjects([]);
-    alert("Logged out");
+
+  logoutBtn.onclick = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    window.location.href = '/login';
   };
 
-  authRow.appendChild(userSpan);
-  authRow.appendChild(loginBtn);
-  authRow.appendChild(logoutBtn);
-
-  // Controls: Load My Projects, Open Editor, Open Dashboard
-  const controls = createEl("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" } });
-  const myProjectsBtn = createEl("button", { text: "My Projects", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer" } });
-  const openEditorBtn = createEl("button", { text: "Open Editor", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #111827", background: "#111827", color: "#fff", cursor: "pointer" } });
-  const dashboardBtn = createEl("button", { text: "Open Dashboard", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer" } });
-  const forceLoadBtn = createEl("button", { text: "Load projectId", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer" } });
-  controls.appendChild(myProjectsBtn);
-  controls.appendChild(openEditorBtn);
-  controls.appendChild(dashboardBtn);
-  controls.appendChild(forceLoadBtn);
-
-  // Projects list container
-  const projectsContainer = createEl("div", { id: "day17-projects", style: { borderTop: "1px solid rgba(0,0,0,0.04)", paddingTop: "8px", maxHeight: "300px", overflow: "auto" } });
-  // Footer small
-  const footer = createEl("div", { style: { marginTop: "8px", fontSize: "12px", color: "#666", display: "flex", justifyContent: "space-between", alignItems: "center" } });
-  const hint = createEl("div", { text: "Day17 • Projects & Dashboard" });
-  const helpBtn = createEl("button", { text: "Help", style: { padding: "4px 8px", borderRadius: "6px", border: "1px solid #e5e7eb", background: "transparent", cursor: "pointer" } });
   helpBtn.onclick = () => {
-    alert("Day17 panel: Use 'My Projects' to fetch your saved projects (requires login). Click Open to load in Editor. Duplicate/Delete are available for owned projects.");
+    alert('Day17 • Projects & Dashboard\n\nHelp: Use the buttons to manage your projects.');
   };
-  footer.appendChild(hint);
-  footer.appendChild(helpBtn);
 
-  body.appendChild(authRow);
-  body.appendChild(controls);
-  body.appendChild(projectsContainer);
-  body.appendChild(footer);
+  // Create button container
+  const buttonContainer = createEl("div", {
+    style: {
+      position: "fixed",
+      top: "8px",
+      right: "8px",
+      display: "flex",
+      gap: "4px",
+      zIndex: 1000
+    }
+  });
 
-  root.appendChild(header);
-  root.appendChild(body);
+  // Add buttons to container
+  buttonContainer.appendChild(dashboardBtn);
+  buttonContainer.appendChild(loadBtn);
+  buttonContainer.appendChild(logoutBtn);
+  buttonContainer.appendChild(helpBtn);
+  
+  root.appendChild(buttonContainer);
   document.body.appendChild(root);
   // Helper to render a list of projects
   function renderProjects(list) {
@@ -224,10 +244,6 @@
   dashboardBtn.onclick = () => {
     window.location.href = "/dashboard";
   };
-  openEditorBtn.onclick = () => {
-    // Navigate to editor; editor will read loadedLayout/loadedProjectId from localStorage
-    window.location.href = "/editor";
-  };
   forceLoadBtn.onclick = async () => {
     const id = prompt("Enter project id to load into editor:");
     if (!id) return;
@@ -297,8 +313,6 @@
       userSpan.textContent = "Logged in";
       loginBtn.style.display = "none";
       logoutBtn.style.display = "";
-      // auto-fetch projects for convenience
-      setTimeout(() => { try { myProjectsBtn.click(); } catch(e){} }, 150);
     } else {
       userSpan.textContent = "Not logged in";
       loginBtn.style.display = "";

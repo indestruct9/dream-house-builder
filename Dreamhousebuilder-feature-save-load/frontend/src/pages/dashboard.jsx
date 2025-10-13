@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { API_BASE } from "../services/api";
 
-export default function Dashboard() {
+export default function Dashboard({ sidebar }) {
   const [projects, setProjects] = useState([]);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(8);
@@ -109,24 +109,26 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Your Designs</h1>
-        <div className="flex items-center gap-4">
-          {username ? (
-            <div className="flex items-center gap-2">
-              <div className="text-sm">Signed in as <strong>{username}</strong></div>
-              <button onClick={handleLogout} className="px-3 py-2 bg-red-600 text-white rounded">Logout</button>
-            </div>
-          ) : (
-            <div className="flex gap-2">
-              <button onClick={() => navigate("/login")} className="px-3 py-2 bg-blue-600 text-white rounded">Login</button>
-              <button onClick={() => navigate("/signup")} className="px-3 py-2 bg-gray-200 rounded">Register</button>
-            </div>
-          )}
-          <button onClick={handleNewProject} className="px-3 py-2 bg-green-600 text-white rounded">+ New Project</button>
+    <div className={sidebar ? "p-0" : "p-6 card"} style={sidebar ? { boxShadow: "none", border: "none", background: "none", height: "100%", margin: 0, maxWidth: '100%' } : {}}>
+      {!sidebar && (
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold">Your Designs</h1>
+          <div className="flex items-center gap-4">
+            {username ? (
+              <div className="flex items-center gap-2">
+                <div className="text-sm">Signed in as <strong>{username}</strong></div>
+                <button onClick={handleLogout} className="px-3 py-2 bg-red-600 text-white rounded">Logout</button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <button onClick={() => navigate("/login")} className="px-3 py-2 bg-blue-600 text-white rounded">Login</button>
+                <button onClick={() => navigate("/signup")} className="px-3 py-2 bg-gray-200 rounded">Register</button>
+              </div>
+            )}
+            <button onClick={handleNewProject} className="px-3 py-2 bg-green-600 text-white rounded">+ New Project</button>
+          </div>
         </div>
-      </div>
+      )}
 
       <form onSubmit={onSearchSubmit} className="flex gap-2 mb-4">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or ID..." className="border p-2 rounded w-80" />

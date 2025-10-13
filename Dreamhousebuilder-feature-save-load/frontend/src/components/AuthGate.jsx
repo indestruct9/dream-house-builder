@@ -13,7 +13,6 @@ export default function AuthGate() {
         <div style={{ marginTop: 18, display: "flex", gap: 12 }}>
           <Link to="/login" className="btn-coffee">Login</Link>
           <Link to="/signup" className="btn-coffee-ghost">Sign up</Link>
-          <button onClick={() => { localStorage.setItem('token', 'demo-token'); localStorage.setItem('username', 'DemoUser'); window.location.reload(); }} className="btn-soft">Demo login</button>
         </div>
         <div style={{ marginTop: 12 }} className="small-muted">Please log in to access the editor, dashboard, and extras.</div>
       </div>

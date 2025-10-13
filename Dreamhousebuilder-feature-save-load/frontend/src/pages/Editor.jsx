@@ -5,7 +5,6 @@ import RoomList from "../components/RoomList";
 import RoomEditor from "../components/RoomEditor";
 import api from "../services/api";
 import CollabClient from "../services/collab";
-import { useToasts } from "../components/ToastContext";
 
 /**
  * Day20 Editor — Presence, Cursors, Autosave, Rollback
@@ -54,55 +53,23 @@ export default function Editor() {
 
   // viewer & history
   const viewerRef = useRef(null);
-  const [furnished, setFurnished] = useState(true);
-  const [showGrid, setShowGrid] = useState(true);
-  // toasts
-  const { push } = useToasts();
   const undoStackRef = useRef([]);
   const redoStackRef = useRef([]);
   const initialLoadRef = useRef(true);
   useEffect(() => {
     const stored = localStorage.getItem("loadedLayout");
     const storedId = localStorage.getItem("loadedProjectId");
-    const tryLoadById = async (id) => {
+    if (stored) {
       try {
-        const res = await api.get(`/projects/${id}`);
-        const proj = res.data || res;
-        if (proj && proj.layout) {
-          setLayout(proj.layout);
-          setProjectId(id);
-          if (proj.thumbnail) setThumbnailUrl(proj.thumbnail);
-        }
-      } catch (e) {
-        console.warn("Failed to auto-load project", e);
-      }
-    };
-
-    (async () => {
-      if (stored) {
-        try {
-          setLayout(JSON.parse(stored));
-          localStorage.removeItem("loadedLayout");
-        } catch (e) {}
-      }
-      if (storedId) {
-        // prefer stored layout, but if not present fetch project by id
-        if (!stored) {
-          await tryLoadById(storedId);
-        } else {
-          setProjectId(storedId);
-        }
-        localStorage.removeItem("loadedProjectId");
-      } else {
-        // if no storedId in localStorage but a value exists (edge cases), try env
-        const maybe = localStorage.getItem("loadedProjectId");
-        if (maybe && !stored) {
-          await tryLoadById(maybe);
-          localStorage.removeItem("loadedProjectId");
-        }
-      }
-      setTimeout(() => (initialLoadRef.current = false), 10);
-    })();
+        setLayout(JSON.parse(stored));
+        localStorage.removeItem("loadedLayout");
+      } catch (e) {}
+    }
+    if (storedId) {
+      setProjectId(storedId);
+      localStorage.removeItem("loadedProjectId");
+    }
+    setTimeout(() => (initialLoadRef.current = false), 10);
   }, []);
   // ---------- History helpers ----------
   const cloneLayout = (l) => (l ? JSON.parse(JSON.stringify(l)) : { rooms: [], meta: {} });
@@ -718,272 +685,311 @@ export default function Editor() {
 
   // ---------- render ----------
   return (
-    <div>
-      <div className="p-3 card" style={{ margin: '8px 20px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button onClick={handleSaveProject} className="btn-coffee">Save</button>
-            <button onClick={handleExportJSON} className="btn-coffee-ghost">Export JSON</button>
-            <button onClick={handleExportSVG} className="btn-soft">Export SVG</button>
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <label className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input type="checkbox" checked={furnished} onChange={(e)=> setFurnished(e.target.checked)} /> Furnished
-            </label>
-            <label className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <input type="checkbox" checked={showGrid} onChange={(e)=> setShowGrid(e.target.checked)} /> Grid
-            </label>
-          </div>
+    <div className="p-6 grid grid-cols-3 gap-6 editor-grid workspace-bg">
+      <div className="col-span-1 space-y-4 card">
+        <h2 className="section-title">Preferences</h2>
+        <PreferenceForm onGenerated={handleGenerated} />
+
+        <div className="mt-4">
+          <h3 className="font-semibold">Add Room</h3>
+          <AddRoomForm onAdd={(r) => handleAddRoom(r)} />
         </div>
-      </div>
 
-      <div className="p-6 grid grid-cols-3 gap-6 editor-grid workspace-bg">
-        {/* Left column: Preferences & Controls */}
-        <div className="col-span-1 space-y-4 card">
-          <h2 className="section-title">Preferences</h2>
-          <PreferenceForm onGenerated={handleGenerated} />
-
-          <div className="mt-4">
-            <h3 className="font-semibold">Add Room</h3>
-            <AddRoomForm onAdd={(r) => handleAddRoom(r)} />
+      
+        <div className="mt-4">
+          <h3 className="font-semibold">Transform Controls</h3>
+          <div className="flex gap-2 mb-2">
+            <button onClick={() => setTransformMode("translate")} className={`px-2 py-1 rounded ${transformMode === "translate" ? "btn-coffee" : "btn-coffee-ghost"}`}>Move</button>
+            <button onClick={() => setTransformMode("rotate")} className={`px-2 py-1 rounded ${transformMode === "rotate" ? "btn-coffee" : "btn-coffee-ghost"}`}>Rotate</button>
+            <button onClick={() => setTransformMode("scale")} className={`px-2 py-1 rounded ${transformMode === "scale" ? "btn-coffee" : "btn-coffee-ghost"}`}>Scale</button>
           </div>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={snapEnabled} onChange={(e) => setSnapEnabled(e.target.checked)} />
+            <span className="text-sm">Snap to grid ({snapEnabled ? snapSize : "off"})</span>
+          </label>
+        </div>
 
-          <div className="mt-4">
-            <h3 className="font-semibold">Transform Controls</h3>
-            <div className="flex gap-2 mb-2">
-              <button onClick={() => setTransformMode("translate")} className={`px-2 py-1 rounded ${transformMode === "translate" ? "btn-coffee" : "btn-coffee-ghost"}`}>Move</button>
-              <button onClick={() => setTransformMode("rotate")} className={`px-2 py-1 rounded ${transformMode === "rotate" ? "btn-coffee" : "btn-coffee-ghost"}`}>Rotate</button>
-              <button onClick={() => setTransformMode("scale")} className={`px-2 py-1 rounded ${transformMode === "scale" ? "btn-coffee" : "btn-coffee-ghost"}`}>Scale</button>
-            </div>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={snapEnabled} onChange={(e) => setSnapEnabled(e.target.checked)} />
-              <span className="text-sm">Snap to grid ({snapEnabled ? snapSize : "off"})</span>
-            </label>
-          </div>
+        <div className="mt-4 flex gap-2">
+          <button onClick={handleSaveProject} className="btn-coffee">Save Project</button>
+          <button onClick={handleExportJSON} className="btn-coffee-ghost">Export JSON</button>
+          <button onClick={handleExportSVG} className="btn-soft">Export SVG</button>
+        </div>
 
-          <div className="mt-4 flex gap-2">
-            <button onClick={handleSaveProject} className="btn-coffee">Save Project</button>
-            <button onClick={handleExportJSON} className="btn-coffee-ghost">Export JSON</button>
-            <button onClick={handleExportSVG} className="btn-soft">Export SVG</button>
-          </div>
+        {/* Day 19: Undo/Redo buttons */}
+    <div className="mt-3 flex gap-2">
+      <button onClick={() => collabRef.current && collabRef.current.sendUndo()} className="btn-soft">Undo</button>
+      <button onClick={() => collabRef.current && collabRef.current.sendRedo()} className="btn-soft">Redo</button>
+    </div>
+        
+        <div className="mt-3">
+          <button onClick={() => { if (!projectId) return alert("Save project first to access versions.");
+          fetchVersions(); }} className="btn-coffee" disabled={!projectId}>
+            Versions
+          </button>
+        </div>
 
-          <div className="mt-3 flex gap-2">
-            <button onClick={() => collabRef.current && collabRef.current.sendUndo()} className="btn-soft">Undo</button>
-            <button onClick={() => collabRef.current && collabRef.current.sendRedo()} className="btn-soft">Redo</button>
-          </div>
-
-          <div className="mt-3">
-            <button onClick={() => { if (!projectId) return alert("Save project first to access versions."); fetchVersions(); }} className="btn-coffee" disabled={!projectId}>Versions</button>
-          </div>
-
-          <div className="mt-3">
-            <div className="text-sm">Collab status: <strong className="muted">{collabStatus}</strong></div>
-            {collabStatus === "connecting" && <div className="text-sm" style={{fontSize:12}}>Reconnecting… backoff: {reconnectDelay}ms</div>}
-            <div className="text-sm">Connected participants: <strong>{participants.length}</strong></div>
-            <div className="text-sm">Pending ops: <strong>{Object.keys(pendingOps).length}</strong></div>
-            {Object.keys(pendingOps).length > 0 && (
-              <div style={{ marginTop: 6 }}>
-                {Object.values(pendingOps).map((p) => (
-                  <div key={p.opId} style={{ fontSize: 12, color: "#444" }}>
-                    ⏳ {p.roomName || "op"} — {new Date(p.ts).toLocaleTimeString()}
-                  </div>
-                ))}
-              </div>
-            )}
-            <button onClick={() => collabRef.current && collabRef.current._sendPending()} className="btn-soft mt-2">Resend pending</button>
-          </div>
-
-          <div className="mt-2 text-sm text-gray-500">
-            {autosaveStatus === "saving" ? "Saving..." : (autosaveStatus === "saved" ? "All changes saved" : null)}
-          </div>
-
-          <div className="mt-4">
-            <h3 className="font-semibold section-title">Recent Ops</h3>
-            <div className="flex flex-col gap-1 text-sm overflow-y-auto" style={{maxHeight: "150px"}}>
-              {recentOps.length === 0 ? <div className="text-gray-500">No ops yet.</div> : recentOps.map((op, i) => (
-                <div key={i} className="bg-gray-100 p-2 rounded"><strong>{op.op?.kind || op.type}</strong> by {op.from}</div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <h3 className="font-semibold section-title">Participants</h3>
-            <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
-              {participants.length === 0 ? <div style={{ color: "#666" }}>No one else here</div> : participants.map((p) => (
-                <div key={p.userId} style={{ display: "flex", gap: 8, alignItems: "center" }} className="room-item">
-                  <div className="avatar">{(p.displayName || "U")[0]}</div>
-                  <div style={{ fontSize: 13 }}>
-                    <div style={{ fontWeight: 600 }}>{p.displayName}</div>
-                    <div className="small-muted">{p.cursor ? `cursor: ${JSON.stringify(p.cursor)}` : "idle"}</div>
-                  </div>
+        <div className="mt-3">
+          <div className="text-sm">Collab status: <strong className="muted">{collabStatus}</strong></div>
+          {collabStatus === "connecting" && <div className="text-sm" style={{fontSize:12}}>Reconnecting… backoff: {reconnectDelay}ms</div>}
+          <div className="text-sm">Connected participants: <strong>{participants.length}</strong></div>
+          <div className="text-sm">Pending ops: <strong>{Object.keys(pendingOps).length}</strong></div>
+          {Object.keys(pendingOps).length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              {Object.values(pendingOps).map((p) => (
+                <div key={p.opId} style={{ fontSize: 12, color: "#444" }}>
+                  ⏳ {p.roomName || "op"} — {new Date(p.ts).toLocaleTimeString()}
                 </div>
               ))}
             </div>
-          </div>
-
-          {thumbnailUrl && (
-            <div className="mt-4">
-              <h3 className="font-semibold">Thumbnail Preview</h3>
-              <img src={thumbnailUrl} alt="thumbnail" style={{ width: "100%", borderRadius: 6, border: "1px solid #ddd" }} />
-            </div>
           )}
-
-          {saved && <div className="mt-2 text-green-600">Saved ✔</div>}
+          <button onClick={() => collabRef.current && collabRef.current._sendPending()} className="btn-soft mt-2">Resend pending</button>
+        </div>
+        
+        {/* Day 20: Autosave Status */}
+        <div className="mt-2 text-sm text-gray-500">
+          {autosaveStatus === "saving" ? "Saving..." : (autosaveStatus === "saved" ? "All changes saved" : null)}
         </div>
 
-        {/* Middle column: 3D Viewer */}
-        <div className="col-span-1 card" onMouseMove={handleMouseMove} style={{ position: "relative" }}>
-          <h2 className="section-title mb-2">3D Viewer</h2>
-          <div style={{ height: 420, display: 'flex', alignItems: 'stretch' }}>
-            <ThreeDViewer
-              ref={viewerRef}
-              layout={layout || { rooms: [] }}
-              selectedRoomName={selected}
-              onSelectRoom={handleSelectRoom}
-              onTransformEnd={handleTransformEnd}
-              mode={transformMode}
-              snap={snapEnabled ? snapSize : 0}
-              furnished={furnished}
-              showGrid={showGrid}
-            />
+        {/* Day 19: Recent Ops Panel */}
+        <div className="mt-4">
+          <h3 className="font-semibold section-title">Recent Ops</h3>
+          <div className="flex flex-col gap-1 text-sm overflow-y-auto" style={{maxHeight: "150px"}}>
+            {recentOps.length === 0 ? <div className="text-gray-500">No ops yet.</div> : recentOps.map((op, i) => (
+                <div key={i} className="bg-gray-100 p-2 rounded">
+                    <strong>{op.op?.kind || op.type}</strong> by {op.from}
+                </div>
+            ))}
           </div>
-          {Object.entries(otherCursors).map(([id, cursor]) => (
-            <div
-              key={id}
-              className="absolute w-5 h-5 bg-blue-500 rounded-full pointer-events-none opacity-50"
-              style={{ left: cursor.x, top: cursor.y, transform: 'translate(-50%, -50%)' }}
-            />
-          ))}
         </div>
 
-        {/* Right column: Rooms & Editor */}
-        <div className="col-span-1 space-y-4 card">
-          <h2 className="section-title">Rooms</h2>
-          <RoomList layout={layout || { rooms: [] }} onSelect={(r) => handleSelectRoom(r)} />
+        <div className="mt-4">
+          <h3 className="font-semibold section-title">Participants</h3>
+          <div style={{ display: "flex", gap: 8, flexDirection: "column" }}>
+            {participants.length === 0 ?
+            <div style={{ color: "#666" }}>No one else here</div> : participants.map((p) => (
+              <div key={p.userId} style={{ display: "flex", gap: 8, alignItems: "center" }} className="room-item">
+                <div className="avatar">{(p.displayName || "U")[0]}</div>
+                <div style={{ fontSize: 13 }}>
+                  <div style={{ fontWeight: 600 }}>{p.displayName}</div>
+                  <div className="small-muted">{p.cursor ? `cursor: ${JSON.stringify(p.cursor)}` : "idle"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+ 
+        {thumbnailUrl && (
           <div className="mt-4">
-            <h3 className="font-semibold">Editor</h3>
-            <RoomEditor room={(layout?.rooms || []).find((r) => r.name === selected)} onChange={handleRoomChange} onDelete={handleDeleteRoom} />
+            <h3 className="font-semibold">Thumbnail Preview</h3>
+            <img src={thumbnailUrl} alt="thumbnail" style={{ width: "100%", borderRadius: 6, border: "1px solid #ddd" }} />
           </div>
+        )}
+
+        {saved && <div className="mt-2 text-green-600">Saved ✔</div>}
+      </div>
+
+    
+      <div className="col-span-1 card" onMouseMove={handleMouseMove} style={{ position: "relative" }}>
+        <h2 className="section-title mb-2">3D Viewer</h2>
+        <div style={{ height: 420, display: 'flex', alignItems: 'stretch' }}>
+        <ThreeDViewer
+          ref={viewerRef}
+          layout={layout ||
+          { rooms: [] }}
+          selectedRoomName={selected}
+          onSelectRoom={handleSelectRoom}
+          onTransformEnd={handleTransformEnd}
+          mode={transformMode}
+          snap={snapEnabled ?
+          snapSize : 0}
+        />
+        </div>
+        {/* Day 20: Render other users' cursors */}
+        {Object.entries(otherCursors).map(([id, cursor]) => (
+            <div 
+                key={id} 
+                className="absolute w-5 h-5 bg-blue-500 rounded-full pointer-events-none opacity-50"
+                style={{
+                    left: cursor.x, 
+                    top: cursor.y,
+                    transform: 'translate(-50%, -50%)',
+                }} 
+            />
+        ))}
+      </div>
+
+      <div className="col-span-1 space-y-4 card">
+        <h2 className="section-title">Rooms</h2>
+        <RoomList layout={layout || { rooms: [] }} onSelect={(r) => handleSelectRoom(r)} />
+        <div className="mt-4">
+          <h3 className="font-semibold">Editor</h3>
+          <RoomEditor room={(layout?.rooms || []).find((r) => r.name === selected)} onChange={handleRoomChange} onDelete={handleDeleteRoom} />
         </div>
       </div>
 
       {/* Versions modal / panel */}
       {versionsOpen && (
-        <div style={{ position: "fixed", left: 20, right: 20, top: 40, bottom: 40, background: "rgba(255,255,255,0.98)", border: "1px solid #ccc", borderRadius: 8, padding: 20, overflow: "auto", zIndex: 9999 }}>
+        <div style={{
+          position: 
+          "fixed", left: 20, right: 20, top: 40, bottom: 40,
+          background: "rgba(255,255,255,0.98)", border: "1px solid #ccc", borderRadius: 8, padding: 20, overflow: "auto", zIndex: 9999
+        }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <h3>Versions for project {projectId}</h3>
             <div>
-              <button onClick={() => { setVersionsOpen(false); setPreviewingVersion(null); setCompareMode(false); }} style={{ marginRight: 8 }} className="px-2 py-1 bg-gray-200 rounded">Close</button>
+              
+            <button onClick={() => { setVersionsOpen(false); setPreviewingVersion(null); setCompareMode(false); }} style={{ marginRight: 8 }} className="px-2 py-1 bg-gray-200 rounded">Close</button>
               <button onClick={cancelPreview} className="px-2 py-1 bg-gray-200 rounded">Reload Current</button>
             </div>
           </div>
 
-          {loadingVersions ? <div>Loading versions...</div> : (
+          {loadingVersions ?
+          <div>Loading versions...</div> : (
             <div style={{ display: "grid", gap: 12 }}>
+              {/* Versions list */}
               <div>
                 {versionsList.length === 0 ? <div>No versions found.</div> : (
-                  <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gap: 8 
+                  }}>
                     {versionsList.map((v) => (
                       <div key={v.version} style={{ border: "1px solid #ddd", padding: 8, borderRadius: 6, display: "flex", gap: 12, alignItems: "center" }}>
                         <div style={{ width: 120, height: 80, background: "#f5f5f5", display: "flex", alignItems: "center", justifyContent: "center" }}>
+ 
                           {v.thumbnail ? (
                             <img src={`/projects/${projectId}/versions/${v.version}/thumbnail`} alt="thumb" style={{ maxWidth: "100%", maxHeight: "100%" }} onError={(e)=>{e.target.onerror=null; e.target.src="/favicon.ico"}} />
-                          ) : <div style={{ fontSize: 12, color: "#666" }}>No thumb</div>}
+                          ) : <div style={{ fontSize: 12, color: "#666" 
+                          }}>No thumb</div>}
                         </div>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 600 }}>{v.name || "Version"}</div>
+                          <div style={{ fontWeight: 600 }}>{v.name ||
+                          "Version"}</div>
                           <div style={{ fontSize: 12, color: "#666" }}>Version id: {v.version}</div>
                           <div style={{ fontSize: 12, color: "#666" }}>Created: {v.created}</div>
                         </div>
+         
                         <div style={{ display: "flex", gap: 8 }}>
                           <button onClick={() => previewVersion(v.version)} className="px-2 py-1 bg-blue-600 text-white rounded">Preview</button>
                           <button onClick={() => rollbackVersion(v.version)} className="px-2 py-1 bg-red-600 text-white rounded">Rollback</button>
                           <button onClick={() => revertToVersion(v.version)} className="px-2 py-1 bg-red-600 text-white rounded">Revert</button>
-                        </div>
+                          </div>
                       </div>
                     ))}
                   </div>
                 )}
-              </div>
+           
+            </div>
 
+              {/* Compare controls */}
               <div style={{ borderTop: "1px solid #eee", paddingTop: 12 }}>
                 <h4>Compare Versions</h4>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                  <select value={compareLeftId || ""} onChange={(e) => setCompareLeftId(e.target.value)} className="border p-1 rounded">
+               
+                <select value={compareLeftId || ""} onChange={(e) => setCompareLeftId(e.target.value)} className="border p-1 rounded">
                     <option value="">Select left version</option>
                     {versionsList.map((v) => <option key={v.version} value={v.version}>{v.version} • {v.created}</option>)}
                   </select>
                   <button onClick={() => { if (!compareLeftId || !compareRightId) return; swapCompareSides(); }} className="px-2 py-1 bg-gray-200 rounded">Swap</button>
-                  <select value={compareRightId || ""} onChange={(e) => setCompareRightId(e.target.value)} className="border p-1 rounded">
+                  <select value={compareRightId ||
+                  ""} onChange={(e) => setCompareRightId(e.target.value)} className="border p-1 rounded">
                     <option value="">Select right version</option>
                     {versionsList.map((v) => <option key={v.version} value={v.version}>{v.version} • {v.created}</option>)}
                   </select>
-                  <button onClick={() => runCompare(compareLeftId, compareRightId)} className="px-3 py-1 bg-indigo-600 text-white rounded" disabled={loadingCompare}>Compare</button>
-                  <button onClick={() => { setCompareMode(false); setCompareLeftLayout(null); setCompareRightLayout(null); setCompareDiff(null); }} className="px-3 py-1 bg-gray-200 rounded">Clear</button>
+                  <button onClick={() => runCompare(compareLeftId, compareRightId)} className="px-3 py-1 bg-indigo-600 text-white 
+                  rounded" disabled={loadingCompare}>Compare</button>
+                  <button onClick={() => { setCompareMode(false);
+                  setCompareLeftLayout(null); setCompareRightLayout(null); setCompareDiff(null); }} className="px-3 py-1 bg-gray-200 rounded">Clear</button>
                 </div>
 
                 {loadingCompare && <div>Computing diff...</div>}
 
+                {/* Compare view */}
                 {compareMode && compareDiff && (
-                  <div style={{ display: "grid", gap: 12 }}>
+                  <div 
+                  style={{ display: "grid", gap: 12 }}>
                     <div style={{ display: "flex", gap: 12 }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, marginBottom: 6 }}>Left: {compareLeftId}</div>
+            
                         <div style={{ border: "1px solid #ddd", padding: 8, borderRadius: 6 }}>
                           <ThreeDViewer layout={compareLeftLayout || { rooms: [] }} selectedRoomName={null} />
                         </div>
-                      </div>
+                    
+                    </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, marginBottom: 6 }}>Right: {compareRightId}</div>
                         <div style={{ border: "1px solid #ddd", padding: 8, borderRadius: 6 }}>
-                          <ThreeDViewer layout={compareRightLayout || { rooms: [] }} selectedRoomName={null} />
+       
+                          <ThreeDViewer layout={compareRightLayout ||
+                          { rooms: [] }} selectedRoomName={null} />
                         </div>
                       </div>
                     </div>
 
+                    {/* diff summary */}
+      
                     <div style={{ borderTop: "1px dashed #ddd", paddingTop: 8 }}>
                       <h5>Diff summary</h5>
                       <div style={{ display: "flex", gap: 12 }}>
-                        <div style={{ flex: 1 }}>
+                        <div style={{ flex: 
+                        1 }}>
                           <div style={{ fontWeight: 600 }}>Added in Right</div>
-                          {compareDiff.added.length === 0 ? <div style={{ color: "#666" }}>none</div> : compareDiff.added.map((r) => (
+                          {compareDiff.added.length === 0 ?
+                          <div style={{ color: "#666" }}>none</div> : compareDiff.added.map((r) => (
                             <div key={r.name} style={{ padding: 6, border: "1px solid #e6f4ea", background: "#f3fff6", marginTop: 6, borderRadius: 4 }}>
                               <div style={{ fontWeight: 600 }}>{r.name}</div>
+               
                               <div style={{ fontSize: 12 }}>size: {r.size} • x: {r.x} • y: {r.y}</div>
                             </div>
                           ))}
-                        </div>
+                    
+                      </div>
 
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 600 }}>Removed from Right</div>
-                          {compareDiff.removed.length === 0 ? <div style={{ color: "#666" }}>none</div> : compareDiff.removed.map((r) => (
+                          {compareDiff.removed.length === 0 ?
+                          <div style={{ color: "#666" }}>none</div> : compareDiff.removed.map((r) => (
                             <div key={r.name} style={{ padding: 6, border: "1px solid #fff0f0", background: "#fff7f7", marginTop: 6, borderRadius: 4 }}>
                               <div style={{ fontWeight: 600 }}>{r.name}</div>
+               
                               <div style={{ fontSize: 12 }}>size: {r.size} • x: {r.x} • y: {r.y}</div>
                             </div>
                           ))}
-                        </div>
+                    
+                      </div>
 
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 600 }}>Modified</div>
-                          {compareDiff.modified.length === 0 ? <div style={{ color: "#666" }}>none</div> : compareDiff.modified.map((m) => (
+                          {compareDiff.modified.length === 0 ?
+                          <div style={{ color: "#666" }}>none</div> : compareDiff.modified.map((m) => (
                             <div key={m.name} style={{ padding: 6, border: "1px solid #eee", background: "#fff", marginTop: 6, borderRadius: 4 }}>
                               <div style={{ fontWeight: 600 }}>{m.name}</div>
-                              <div style={{ fontSize: 12 }}>{Object.entries(m.changes).map(([k, [a, b]]) => (<div key={k}><strong>{k}:</strong> {String(a)} → {String(b)}</div>))}</div>
+               
+                              <div style={{ fontSize: 12 }}>
+                                {Object.entries(m.changes).map(([k, [a, b]]) => (
+                                  <div key={k}><strong>{k}:</strong> {String(a)} → {String(b)}</div>
+       
+                               ))}
+                              </div>
                             </div>
+                 
                           ))}
                         </div>
                       </div>
 
                       <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-                        <button onClick={() => downloadDiffJSON()} className="px-3 py-1 bg-gray-200 rounded">Download diff JSON</button>
-                        <button onClick={() => { if (compareLeftId) previewVersion(compareLeftId); }} className="px-3 py-1 bg-blue-600 text-white rounded">Open Left in Editor</button>
-                        <button onClick={() => { if (compareRightId) previewVersion(compareRightId); }} className="px-3 py-1 bg-blue-600 text-white rounded">Open Right in Editor</button>
+               
+                          <button onClick={() => downloadDiffJSON()} className="px-3 py-1 bg-gray-200 rounded">Download diff JSON</button>
+                        <button onClick={() => { if (compareLeftId) previewVersion(compareLeftId);
+                        }} className="px-3 py-1 bg-blue-600 text-white rounded">Open Left in Editor</button>
+                        <button onClick={() => { if (compareRightId) previewVersion(compareRightId);
+                        }} className="px-3 py-1 bg-blue-600 text-white rounded">Open Right in Editor</button>
                       </div>
                     </div>
                   </div>
                 )}
               </div>
+  
             </div>
           )}
         </div>
