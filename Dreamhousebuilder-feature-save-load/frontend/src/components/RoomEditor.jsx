@@ -15,24 +15,37 @@ export default function RoomEditor({ room, onChange, onDelete }) {
   };
 
   return (
-    <div className="p-3 bg-white rounded shadow">
-      <label className="block text-sm font-medium">Name</label>
-      <input className="border p-1 w-full mb-2" value={room.name} onChange={handle("name")} />
+    <div className="card">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div>
+          <label className="block text-sm font-medium">Name</label>
+          <input className="input-coffee w-full mb-2" value={room.name} onChange={handle("name")} />
+        </div>
 
-      <label className="block text-sm font-medium">Size (m)</label>
-      <input className="border p-1 w-full mb-2" value={room.size} onChange={handle("size")} />
+        <div>
+          <label className="block text-sm font-medium">Size (m)</label>
+          <input className="input-coffee w-full mb-2" value={room.size} onChange={handle("size")} />
+        </div>
 
-      <label className="block text-sm font-medium">X</label>
-      <input className="border p-1 w-full mb-2" value={room.x} onChange={handle("x")} />
+        <div>
+          <label className="block text-sm font-medium">X</label>
+          <input className="input-coffee w-full mb-2" value={room.x} onChange={handle("x")} />
+        </div>
 
-      <label className="block text-sm font-medium">Y</label>
-      <input className="border p-1 w-full mb-2" value={room.y} onChange={handle("y")} />
+        <div>
+          <label className="block text-sm font-medium">Y</label>
+          <input className="input-coffee w-full mb-2" value={room.y} onChange={handle("y")} />
+        </div>
+      </div>
 
-      <div className="flex gap-2">
-        <button
-          className="px-3 py-1 bg-red-600 text-white rounded"
-          onClick={() => onDelete && onDelete(room.name)}
-        >Delete Room</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, alignItems: 'center' }}>
+        <div className="small-muted">Last updated: {room.updatedAt || '—'}</div>
+        <div>
+          <button
+            className="btn-soft"
+            onClick={() => onDelete && onDelete(room.name)}
+          >Delete</button>
+        </div>
       </div>
     </div>
   );

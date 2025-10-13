@@ -88,12 +88,14 @@
   authRow.appendChild(loginBtn);
   authRow.appendChild(logoutBtn);
 
-  // Controls: Load My Projects, Open Dashboard
+  // Controls: Load My Projects, Open Editor, Open Dashboard
   const controls = createEl("div", { style: { display: "flex", gap: "8px", marginBottom: "8px" } });
   const myProjectsBtn = createEl("button", { text: "My Projects", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer" } });
+  const openEditorBtn = createEl("button", { text: "Open Editor", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #111827", background: "#111827", color: "#fff", cursor: "pointer" } });
   const dashboardBtn = createEl("button", { text: "Open Dashboard", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer" } });
   const forceLoadBtn = createEl("button", { text: "Load projectId", style: { padding: "6px 8px", borderRadius: "6px", border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer" } });
   controls.appendChild(myProjectsBtn);
+  controls.appendChild(openEditorBtn);
   controls.appendChild(dashboardBtn);
   controls.appendChild(forceLoadBtn);
 
@@ -222,6 +224,10 @@
   dashboardBtn.onclick = () => {
     window.location.href = "/dashboard";
   };
+  openEditorBtn.onclick = () => {
+    // Navigate to editor; editor will read loadedLayout/loadedProjectId from localStorage
+    window.location.href = "/editor";
+  };
   forceLoadBtn.onclick = async () => {
     const id = prompt("Enter project id to load into editor:");
     if (!id) return;
@@ -291,6 +297,8 @@
       userSpan.textContent = "Logged in";
       loginBtn.style.display = "none";
       logoutBtn.style.display = "";
+      // auto-fetch projects for convenience
+      setTimeout(() => { try { myProjectsBtn.click(); } catch(e){} }, 150);
     } else {
       userSpan.textContent = "Not logged in";
       loginBtn.style.display = "";

@@ -1,10 +1,113 @@
+
+/* Tailwind directives (kept as-is for PostCSS/Tailwind build). Editors that flag unknown at-rules should ignore this block. */
+/*
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+*/
 
 body {
-  font-family: Arial, sans-serif;
-  background-color: #f8fafc;
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f4efe9;
   margin: 0;
   padding: 0;
 }
+
+:root{
+  /* Coffee palette */
+  --bg: #f4efe9; /* light cream */
+  --card: #fffaf6; /* very pale */
+  --muted: #7a6a5a; /* muted coffee */
+  --accent: #6b3e26; /* coffee brown */
+  --accent-600: #54301f; /* darker */
+  --accent-400: #8b5e45;
+  --success: #2f8f6b;
+}
+
+/* App header */
+.app-header {
+  background: transparent;
+  border-bottom: 1px solid rgba(84,48,31,0.06);
+}
+
+.card {
+  background: var(--card);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  box-shadow: 0 6px 18px rgba(84,48,31,0.05), 0 1px 2px rgba(15,23,42,0.02);
+  border: 1px solid rgba(84,48,31,0.04);
+}
+
+.card-coffee { background: var(--card); border-radius: 0.75rem; padding: 1rem; }
+
+.workspace-bg { background: linear-gradient(180deg, rgba(244,239,233,0.6), rgba(255,255,255,0.6)); padding: 1rem; }
+
+.btn-soft {
+  background: rgba(84,48,31,0.06);
+  color: var(--accent-600);
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.375rem;
+  border: 1px solid rgba(84,48,31,0.08);
+}
+
+.btn-coffee {
+  background: linear-gradient(180deg, var(--accent), var(--accent-600));
+  color: #fff;
+  padding: 0.6rem 1rem;
+  border-radius: 0.6rem;
+  border: none;
+  font-weight: 700;
+  display: inline-block;
+  box-shadow: 0 6px 18px rgba(107,62,38,0.14);
+  min-width: 120px;
+  text-decoration: underline;
+  text-underline-offset: 6px;
+}
+
+.btn-coffee-ghost {
+  background: transparent; color: var(--accent-600); border: 1px solid rgba(84,48,31,0.08); padding: 0.4rem 0.7rem; border-radius: 0.45rem;
+}
+
+.input-coffee { border: 1px solid rgba(84,48,31,0.08); padding: 0.5rem; border-radius: 0.4rem; background: #fff; }
+
+.muted { color: var(--muted); }
+
+.small-muted { color: var(--muted); font-size: 0.85rem; }
+
+/* Room list item */
+.room-item { transition: transform .12s ease, box-shadow .12s ease; }
+.room-item:hover { transform: translateY(-4px); box-shadow: 0 8px 22px rgba(84,48,31,0.08); }
+
+.avatar { width: 40px; height: 40px; border-radius: 9999px; display:flex; align-items:center; justify-content:center; background: #f3e7df; color: var(--accent-600); font-weight:700; border:1px solid rgba(84,48,31,0.06); }
+
+@media (max-width: 768px) {
+  .editor-grid { grid-template-columns: 1fr !important; }
+}
+
+.brand-title { color: var(--accent-600); font-weight: 800; font-size: 20px; }
+
+/* Hero / landing card style used on Home */
+.hero-card {
+  max-width: 1100px;
+  margin: 24px auto;
+  padding: 28px 30px;
+  border-radius: 14px;
+  box-shadow: 0 18px 40px rgba(15,23,42,0.06);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.hero-content {
+  flex: 1 1 auto;
+}
+
+.hero-sub {
+  color: var(--muted);
+  margin-top: 8px;
+  font-size: 18px;
+}
+
+.brand-title { color: var(--accent-600); font-weight: 900; font-size: 28px; }
+
+.section-title { color: var(--accent-600); font-weight: 700; }
