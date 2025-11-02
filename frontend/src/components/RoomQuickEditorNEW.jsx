@@ -95,12 +95,6 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
     }
   };
 
-  const addSingleToRoom = (catalogItem) => {
-    const it = { id: `${catalogItem.key}_${Date.now()}`, label: catalogItem.label, cat: catalogItem.cat, icon: catalogItem.icon, pos: randomPos(), price: catalogItem.price };
-    setPreviewItems(prev => [it, ...prev]);
-    setBurst({ emoji: '🎉' });
-    setTimeout(() => setBurst(null), 700);
-  };
 
   const removePreviewItem = (id) => setPreviewItems(prev => prev.filter(i => i.id !== id));
 
@@ -151,10 +145,10 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
             ))}
 
             {/* hint */}
-            {previewItems.length === 0 && (
+                {previewItems.length === 0 && (
               <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', color: '#789', textAlign: 'center' }}>
                 <div style={{ fontSize: 20, marginBottom: 8 }}>Your room is empty</div>
-                <div>Use the gallery to the right to add furniture, then click "Add to Cart" and "Add all to room".</div>
+                <div>Use the gallery to the right to add furniture, then click "Add to Cart".</div>
               </div>
             )}
           </div>
@@ -171,7 +165,6 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
                     <div style={{ fontSize: 12, color: '#666' }}>{ci.cat} • ${ci.price}</div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                       <button className="btn-soft" style={style.smallButton} onClick={() => addToCart(ci)}>Add to Cart</button>
-                      <button className="btn-coffee" style={style.smallButton} onClick={() => addSingleToRoom(ci)}>Add to Room</button>
                     </div>
                   </div>
                 ))}
@@ -206,12 +199,11 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
           </div>
 
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <button className="btn-coffee" style={{ flex: 1 }} onClick={addAllCartToRoom}>Add all to room</button>
             <button className="btn-soft" onClick={resetAll}>Reset</button>
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <button className="btn-coffee" style={{ width: '100%', marginBottom: 8 }} onClick={commitToApp}>Save to App Room</button>
+            {/* 'Save to App Room' removed — feature disabled. Keep local save. */}
             <button className="btn-soft" style={{ width: '100%' }} onClick={savePreviewToLocal}>Save locally</button>
           </div>
 

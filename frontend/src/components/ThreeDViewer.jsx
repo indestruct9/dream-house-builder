@@ -40,7 +40,7 @@ const FURNITURE_ITEMS = {
     return (
       <>
         <ambientLight intensity={0.7} />
-        <directionalLight position={[5, 10, 7]} intensity={1} castShadow />
+          <directionalLight position={[5, 10, 7]} intensity={1} castShadow={false} />
         
         {/* Landscaped ground */}
         <mesh rotation={[-Math.PI/2, 0, 0]} receiveShadow>
@@ -217,7 +217,7 @@ const FURNITURE_ITEMS = {
     return (
       <>
         <ambientLight intensity={0.7} />
-        <directionalLight position={[5, 10, 7]} intensity={1.0} castShadow />
+  <directionalLight position={[5, 10, 7]} intensity={1.0} castShadow={false} />
         
         {/* Marble-textured base */}
         <mesh rotation={[-Math.PI/2, 0, 0]} position={[0, 0, 0]} receiveShadow>
@@ -552,37 +552,120 @@ const SceneInner = forwardRef(({ layout, selectedRoomName, onSelectRoom, onTrans
     </group>
   );
 
+  // Small helper furniture: lamp, rug, basin
+  const Lamp = ({ height = 1.2, color = '#ffdca3' }) => (
+    <group>
+      <mesh position={[0, height/2, 0]} castShadow>
+        <cylinderGeometry args={[0.06, 0.06, height, 12]} />
+        <meshStandardMaterial color={'#5a3b2e'} />
+      </mesh>
+      <mesh position={[0, height - 0.15, 0]} castShadow>
+        <coneGeometry args={[0.18, 0.3, 16]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.6} />
+      </mesh>
+    </group>
+  );
+
+  const Rug = ({ w = 1.2, d = 1.6, color = '#d8cfc1' }) => (
+    <mesh position={[0, 0.02, 0]} rotation={[-Math.PI/2, 0, 0]} receiveShadow>
+      <planeGeometry args={[w, d]} />
+      <meshStandardMaterial color={color} roughness={0.9} metalness={0} side={THREE.DoubleSide} />
+    </mesh>
+  );
+
+  const Basin = ({ w = 0.5, h = 0.4 }) => (
+    <group>
+      <mesh position={[0, h/2, 0]} castShadow>
+        <boxGeometry args={[w, h, 0.35]} />
+        <meshStandardMaterial color={'#ffffff'} />
+      </mesh>
+      <mesh position={[0, h + 0.05, 0]}>
+        <cylinderGeometry args={[0.12, 0.12, 0.06, 12]} />
+        <meshStandardMaterial color={'#e6e6e6'} metalness={0.2} roughness={0.15} />
+      </mesh>
+    </group>
+  );
+
   function RoomInterior({ room, isSelected }){
     const size = Number(room.size) || 3;
     const half = size/2;
+    // wall/floor dimensions that scale with room size for better visibility
+    const wallHeight = 1.8;
+    // increase minimum thickness so very small rooms don't end up as slats
+    const wallThickness = Math.max(0.28, size * 0.045);
     const name = (room.name || '').toLowerCase();
 
-    // basic floor
+    // basic floor + interior-lit walls using planes to avoid overlapping box intersections
     return (
       <group>
-        {/* floor */}
-        {/* marble floor */}
-        <mesh rotation={[-Math.PI/2,0,0]} position={[0, 0.01, 0]}>
-          <planeGeometry args={[size, size]} />
-          <meshStandardMaterial color={'#ffffff'} metalness={0.3} roughness={0.2} />
-        </mesh>
+  {/* removed per-room dynamic lights to improve stability; use global lighting only */}
 
-        {/* modern walls */}
-        {/* back wall */}
-        <mesh position={[0, 0.85, -half+0.05]}> <boxGeometry args={[size, 1.7, 0.1]} /> <meshStandardMaterial color={'#ffffff'} metalness={0.1} roughness={0.3} /></mesh>
-        {/* front low wall */}
-        <mesh position={[0, 0.85, half-0.05]}> <boxGeometry args={[size, 1.7, 0.1]} /> <meshStandardMaterial color={'#f7f1ec'} /></mesh>
-        {/* left wall */}
-        <mesh position={[-half+0.05, 0.85, 0]}> <boxGeometry args={[0.1, 1.7, size]} /> <meshStandardMaterial color={'#f7f1ec'} /></mesh>
-        {/* right wall */}
-        <mesh position={[half-0.05, 0.85, 0]}> <boxGeometry args={[0.1, 1.7, size]} /> <meshStandardMaterial color={'#f7f1ec'} /></mesh>
+        {/* floor removed: interior BackSide box will provide the floor face to avoid overlapping geometry */}
+
+        {/* Use an inset interior box rendered with BackSide so rooms are enclosed from inside without intersecting neighbor walls */}
+        {(() => {
+          const inset = Math.min(0.08, Math.max(0.02, size * 0.03));
+          const innerSize = Math.max(0.2, size - inset * 2);
+          return (
+            <group>
+              <mesh position={[0, wallHeight / 2 + 0.02, 0]} renderOrder={0} frustumCulled={false} castShadow={false} receiveShadow={false}>
+                  <boxGeometry args={[innerSize, wallHeight, innerSize]} />
+                  <meshStandardMaterial
+                    color={'#f6f6f6'}
+                    metalness={0.03}
+                    roughness={0.6}
+                    side={THREE.BackSide}
+                    polygonOffset={true}
+                    polygonOffsetFactor={2}
+                    polygonOffsetUnits={2}
+                    depthWrite={true}
+                  />
+                </mesh>
+              {/* baseboards to hide seams between floor and interior box */}
+              {(() => {
+                const bbH = Math.min(0.08, wallHeight * 0.08);
+                const bbT = Math.min(0.06, Math.max(0.02, innerSize * 0.02));
+                const x = innerSize / 2 - bbT / 2;
+                const z = innerSize / 2 - bbT / 2;
+                return (
+                  <group renderOrder={2} frustumCulled={false}>
+                    {/* front/back */}
+                    <mesh position={[0, bbH / 2, z]} castShadow={false} receiveShadow={false}>
+                      <boxGeometry args={[innerSize + bbT * 2, bbH, bbT]} />
+                      <meshStandardMaterial color={'#eeeeee'} roughness={0.7} polygonOffset={true} polygonOffsetFactor={1} polygonOffsetUnits={1} />
+                    </mesh>
+                    <mesh position={[0, bbH / 2, -z]} castShadow={false} receiveShadow={false}>
+                      <boxGeometry args={[innerSize + bbT * 2, bbH, bbT]} />
+                      <meshStandardMaterial color={'#eeeeee'} roughness={0.7} polygonOffset={true} polygonOffsetFactor={1} polygonOffsetUnits={1} />
+                    </mesh>
+                    {/* left/right */}
+                    <mesh position={[x, bbH / 2, 0]} castShadow={false} receiveShadow={false}>
+                      <boxGeometry args={[bbT, bbH, innerSize]} />
+                      <meshStandardMaterial color={'#eeeeee'} roughness={0.7} polygonOffset={true} polygonOffsetFactor={1} polygonOffsetUnits={1} />
+                    </mesh>
+                    <mesh position={[-x, bbH / 2, 0]} castShadow={false} receiveShadow={false}>
+                      <boxGeometry args={[bbT, bbH, innerSize]} />
+                      <meshStandardMaterial color={'#eeeeee'} roughness={0.7} polygonOffset={true} polygonOffsetFactor={1} polygonOffsetUnits={1} />
+                    </mesh>
+                  </group>
+                );
+              })()}
+            </group>
+          );
+        })()}
 
         {/* furniture based on room name heuristics, using glTF if available and renderMode is 'furnished' */}
         {renderMode === 'furnished' ? (
           (/bath|toilet|wc/).test(name) ? (
             <group position={[0, 0, 0.2]}>
               {toiletGltf ? <primitive object={toiletGltf.scene.clone()} scale={[0.7,0.7,0.7]} /> : <Toilet />}
-              <mesh position={[ -half + 0.6, 0.35, 0.2 ]}> <boxGeometry args={[0.6, 0.18, 0.4]} /> <meshStandardMaterial color={'#ffffff'} /></mesh>
+              {/* small vanity basin & cabinet */}
+              <group position={[ half - 0.7, 0.25, -0.2 ]}>
+                <Basin />
+                <mesh position={[0, 0.05, -0.18]}> <boxGeometry args={[0.6, 0.15, 0.18]} /> <meshStandardMaterial color={'#cfcfcf'} /></mesh>
+              </group>
+              {/* small bath mat */}
+              <group position={[0, 0, 0.6]}> <Rug w={0.6} d={0.9} color={'#f3e9e2'} /> </group>
             </group>
           ) : (/living|lounge|living room|family/).test(name) ? (
             <group>
@@ -609,6 +692,12 @@ const SceneInner = forwardRef(({ layout, selectedRoomName, onSelectRoom, onTrans
                   <meshStandardMaterial color={'#8b5e3c'} metalness={0.1} roughness={0.8} />
                 </mesh>
               </group>
+
+              {/* rug under coffee table */}
+              <group position={[0, 0, half*0.08]}> <Rug w={Math.max(1, size*0.6)} d={Math.max(0.8, size*0.45)} color={'#efe8df'} /> </group>
+
+              {/* floor lamp in corner */}
+              <group position={[ -half*0.8, 0, -half*0.7 ]}> <Lamp height={1.4} color={'#fff1d0'} /> </group>
               
               {/* Modern TV unit */}
               <group position={[half*0.5, 0.4, 0]}>
@@ -635,14 +724,11 @@ const SceneInner = forwardRef(({ layout, selectedRoomName, onSelectRoom, onTrans
                   <meshStandardMaterial color={'#c5c5c5'} />
                 </mesh>
                 {/* Bedside tables */}
-                <mesh position={[-size*0.4, 0.3, -size*0.2]}>
-                  <boxGeometry args={[0.4, 0.4, 0.4]} />
-                  <meshStandardMaterial color={'#8b5e3c'} />
-                </mesh>
-                <mesh position={[size*0.4, 0.3, -size*0.2]}>
-                  <boxGeometry args={[0.4, 0.4, 0.4]} />
-                  <meshStandardMaterial color={'#8b5e3c'} />
-                </mesh>
+                <mesh position={[-size*0.4, 0.3, -size*0.2]}> <boxGeometry args={[0.4, 0.4, 0.4]} /> <meshStandardMaterial color={'#8b5e3c'} /> </mesh>
+                <mesh position={[size*0.4, 0.3, -size*0.2]}> <boxGeometry args={[0.4, 0.4, 0.4]} /> <meshStandardMaterial color={'#8b5e3c'} /> </mesh>
+                {/* bedside lamp and rug */}
+                <group position={[-size*0.4, 0, -size*0.02]}> <Lamp height={0.9} color={'#ffeecc'} /> </group>
+                <group position={[0, 0, size*0.18]}> <Rug w={size*0.6} d={size*0.5} color={'#efe1d6'} /> </group>
               </group>
               {/* Reading area */}
               <group position={[half*0.3, 0, half*0.3]}>
@@ -693,6 +779,8 @@ const SceneInner = forwardRef(({ layout, selectedRoomName, onSelectRoom, onTrans
             <group>
               <group position={[ -half*0.3, 0, -half*0.2 ]}>{sofaGltf ? <primitive object={sofaGltf.scene.clone()} scale={[0.5,0.5,0.5]} /> : <Sofa w={size*0.6} d={0.7} />}</group>
               <group position={[ half*0.5, 0.6, 0 ]}>{tvGltf ? <primitive object={tvGltf.scene.clone()} scale={[0.5,0.5,0.5]} /> : <TV w={Math.min(1.2, size*0.5)} h={0.6} />}</group>
+              {/* generic rug */}
+              <group position={[0, 0, 0.05]}> <Rug w={Math.max(0.8, size*0.6)} d={Math.max(0.8, size*0.5)} color={'#efe8df'} /> </group>
             </group>
           )
         ) : null}
@@ -702,9 +790,10 @@ const SceneInner = forwardRef(({ layout, selectedRoomName, onSelectRoom, onTrans
 
   return (
     <>
-      <ambientLight intensity={0.5} />
-      <hemisphereLight skyColor={"#bde0ff"} groundColor={"#444"} intensity={0.6} />
-      <directionalLight position={[10, 15, 10]} intensity={0.8} castShadow />
+  {/* stronger scene ambient/hemisphere so interiors are visible */}
+  <ambientLight intensity={0.75} />
+  <hemisphereLight skyColor={"#bde0ff"} groundColor={"#444"} intensity={0.9} />
+  <directionalLight position={[10, 15, 10]} intensity={0.9} castShadow={false} />
       <Grid args={[100, 100]} cellColor="#2b2b2b" sectionColor="#2b2b2b" position={[0, 0.001, 0]} />
 
       {/* Ground plane - make non-pickable so room meshes receive pointer events reliably */}
@@ -999,7 +1088,7 @@ const ThreeDViewer = forwardRef(({ layout = { rooms: [] }, modelPath = null, sel
           </button>
         </div>
 
-        <Canvas shadows camera={{ position: [4, 3, 8], fov: 45 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
+  <Canvas shadows={false} camera={{ position: [4, 3, 8], fov: 45 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
           <ambientLight intensity={0.7} />
           <directionalLight position={[5, 10, 7]} intensity={1} castShadow />
           <directionalLight position={[-5, 8, -7]} intensity={0.6} castShadow />
@@ -1092,7 +1181,7 @@ const ThreeDViewer = forwardRef(({ layout = { rooms: [] }, modelPath = null, sel
           Schematic
         </button>
       </div>
-      <Canvas shadows camera={{ position: [10, 12, 10], fov: 50 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
+  <Canvas shadows={false} camera={{ position: [8, 6, 8], fov: 50 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
         {typeof modelPath === 'string' && modelPath.startsWith('demo-exterior') ? (
           (renderMode === 'schematic') ? <DemoExteriorSchematic /> : <DemoExteriorScene />
         ) : typeof modelPath === 'string' && modelPath.startsWith('demo-culture') ? (

@@ -709,13 +709,12 @@ export default function Editor() {
           </label>
         </div>
 
-        <div className="mt-4 flex gap-2">
-          <button onClick={handleSaveProject} className="btn-coffee">Save Project</button>
-          <button onClick={handleExportJSON} className="btn-coffee-ghost">Export JSON</button>
-          <button onClick={handleExportSVG} className="btn-soft">Export SVG</button>
-        </div>
+    <div className="mt-4 flex gap-2">
+      <button onClick={handleSaveProject} className="btn-coffee">Save Project</button>
+      <button onClick={handleExportJSON} className="btn-coffee-ghost">Export JSON</button>
+      <button onClick={handleExportSVG} className="btn-soft">Export SVG</button>
+    </div>
 
-        {/* Day 19: Undo/Redo buttons */}
     <div className="mt-3 flex gap-2">
       <button onClick={() => collabRef.current && collabRef.current.sendUndo()} className="btn-soft">Undo</button>
       <button onClick={() => collabRef.current && collabRef.current.sendRedo()} className="btn-soft">Redo</button>
