@@ -548,3 +548,300 @@ body {
   .hero-video { animation: none !important; }
   .hero-cta-row .btn-coffee { animation: none !important; }
 }
+
+/* Editor page polish — non-invasive CSS overrides to improve layout and visual hierarchy */
+.editor-grid {
+  /* define left / center / right column widths for a professional layout */
+  grid-template-columns: 320px 1fr 320px !important;
+  align-items: start;
+  gap: 28px !important;
+}
+
+.editor-grid > .card {
+  padding: 18px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,250,246,0.9), rgba(255,255,255,0.96));
+  border: 1px solid rgba(15,23,42,0.04);
+}
+
+/* Make left/right sidebars slightly sticky for easier access */
+.editor-grid > .card:first-child,
+.editor-grid > .card:last-child {
+  position: sticky;
+  top: 20px;
+  align-self: start;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+/* Middle viewer column: expand the viewer area and remove vertical clipping */
+.editor-grid > .card:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.editor-grid > .card:nth-child(2) > div {
+  /* the direct wrapper around ThreeDViewer — give it more height */
+  height: 560px !important;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Headings */
+.section-title {
+  display: inline-block;
+  font-size: 1.125rem;
+  color: var(--accent-600);
+  margin: 0 0 8px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(84,48,31,0.06);
+}
+.card h3, .card .font-semibold {
+  color: var(--accent-600);
+  font-weight: 700;
+  margin: 8px 0;
+}
+
+/* Inputs & selects inside cards */
+.card input[type="text"],
+.card input[type="number"],
+.card textarea,
+.card select,
+.card .input-field,
+.card .input-coffee,
+.card .border {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(15,23,42,0.06) !important;
+  background: #ffffff;
+  box-shadow: inset 0 1px 2px rgba(15,23,42,0.03);
+  font-size: 0.95rem;
+  color: #111827;
+}
+.card input:focus, .card textarea:focus, .card select:focus {
+  outline: none;
+  box-shadow: 0 6px 18px rgba(79,70,229,0.06);
+  border-color: rgba(79,70,229,0.12);
+}
+
+/* Tidy form buttons and controls */
+.card .btn-soft, .card .btn-coffee, .card .btn-coffee-ghost {
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.card .btn-soft { padding: 0.55rem 0.9rem; border-radius: 8px; }
+.card .btn-coffee { padding: 0.6rem 1rem; border-radius: 10px; }
+.card .btn-coffee-ghost { padding: 0.5rem 0.9rem; border-radius: 10px; }
+
+/* Recent ops, participants list visual improvements */
+.card .bg-gray-100 { background: linear-gradient(180deg,#fff,#fbfaf9); border: 1px solid rgba(15,23,42,0.03); }
+.card .avatar { width: 44px; height: 44px; font-size: 15px; }
+
+/* Make the versions modal look nicer without changing markup */
+[style*="position: fixed"][style*="zIndex: 9999"], [style*="position: fixed"][style*="z-index: 9999"] {
+  box-shadow: 0 40px 80px rgba(11,22,33,0.12) !important;
+  border-radius: 12px !important;
+  padding: 20px !important;
+}
+
+/* Responsive: collapse to one column on narrow screens */
+@media (max-width: 900px) {
+  .editor-grid { grid-template-columns: 1fr !important; }
+  .editor-grid > .card:first-child, .editor-grid > .card:last-child { position: relative; max-height: none; }
+  .editor-grid > .card:nth-child(2) > div { height: 420px !important; }
+}
+
+/* -----------------------------
+   Premium polish: typography, subtle gradients, refined controls
+   ----------------------------- */
+:root {
+  --glass-100: rgba(255,255,255,0.86);
+  --glass-200: rgba(255,250,246,0.96);
+  --muted-ink: #53504a;
+  --accent-glow: rgba(107,62,38,0.12);
+  --accent-gradient-start: #8b5e45;
+  --accent-gradient-end: #6b3e26;
+}
+
+html, body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* make global text slightly more elegant */
+body { font-size: 15px; line-height: 1.45; color: #0b1220; }
+
+/* Accent bar for section titles */
+.section-title { position: relative; padding-left: 14px; }
+.section-title::before { content: ""; position: absolute; left: 0; top: 8px; width: 6px; height: 18px; border-radius: 4px; background: linear-gradient(180deg, var(--accent-gradient-start), var(--accent-gradient-end)); box-shadow: 0 6px 18px var(--accent-glow); }
+
+/* Elevated header inside cards */
+.card > .section-title, .card > h3 { display: block; }
+.card .section-title + * { margin-top: 8px; }
+
+/* Polished control groups */
+.card .flex { gap: 10px; }
+.card .px-2 { padding-left: 10px; padding-right: 10px; }
+
+/* Buttons - refined shapes and micro-interactions */
+.btn-coffee {
+  background: linear-gradient(180deg,var(--accent-gradient-start),var(--accent-gradient-end));
+  box-shadow: 0 10px 30px rgba(107,62,38,0.14), 0 2px 6px rgba(11,22,33,0.04);
+  border: none;
+  transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+}
+.btn-coffee:active { transform: translateY(1px) scale(.998); }
+.btn-coffee-ghost {
+  background: transparent;
+  color: var(--accent-gradient-end);
+  border: 1px solid rgba(139,94,69,0.12);
+  box-shadow: none;
+}
+.btn-soft {
+  background: linear-gradient(180deg, #ffffff, #fbf8f5);
+  border: 1px solid rgba(11,22,33,0.04);
+}
+
+/* Toggle-like transform controls styling */
+.card .btn-coffee-ghost[disabled], .card .btn-coffee[disabled] { opacity: .6; cursor: not-allowed; }
+.card .btn-coffee-ghost:not(:disabled):hover, .card .btn-coffee:hover { transform: translateY(-3px); }
+
+/* Viewer card polish */
+.editor-grid > .card:nth-child(2) { background: linear-gradient(180deg, #fff, #fffaf9); border-radius: 14px; box-shadow: 0 30px 60px rgba(11,22,33,0.06); padding: 14px; }
+.editor-grid > .card:nth-child(2) > div { border-radius: 12px; overflow: hidden; border: 1px solid rgba(11,22,33,0.04); box-shadow: inset 0 -6px 20px rgba(11,22,33,0.02); }
+
+/* subtle top-right badge placeholder for viewer actions (visual only) */
+.editor-grid > .card:nth-child(2)::after {
+  content: "";
+  position: absolute;
+  right: 36px;
+  top: 34px;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.5));
+  box-shadow: 0 6px 18px rgba(11,22,33,0.06);
+  pointer-events: none;
+  opacity: .4;
+}
+
+/* participants & recent ops list refinements */
+.card .room-item { padding: 8px; border-radius: 8px; }
+.card .room-item .avatar { box-shadow: 0 6px 16px rgba(11,22,33,0.06); }
+
+/* scrollbar for sticky sidebars */
+.editor-grid > .card:first-child::-webkit-scrollbar, .editor-grid > .card:last-child::-webkit-scrollbar { width: 10px; }
+.editor-grid > .card:first-child::-webkit-scrollbar-thumb, .editor-grid > .card:last-child::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(139,94,69,0.16), rgba(107,62,38,0.12)); border-radius: 10px; }
+
+/* Versions modal tweaks (more refined) */
+[style*="position: fixed"][style*="zIndex: 9999"], [style*="position: fixed"][style*="z-index: 9999"] { background: linear-gradient(180deg,#fff,#fffaf9) !important; }
+
+/* small responsive polish */
+@media (max-width: 1100px) {
+  .editor-grid > .card:nth-child(2) > div { height: 520px !important; }
+}
+
+/* finished ultra-polish */
+
+/* ==========================
+   Dark Premium Editor Theme
+   Scoped to `.workspace-bg` so it only affects the editor pages
+   ========================== */
+/* overall workspace background */
+.workspace-bg {
+  background: radial-gradient(1200px 600px at 10% 20%, rgba(16,20,26,0.7), rgba(6,8,10,0.95)) , linear-gradient(180deg,#05060a,#0b0f14);
+  color: #dbe9f6;
+  padding: 18px;
+}
+
+/* cards go deep dark with subtle glass */
+.workspace-bg .card {
+  background: linear-gradient(180deg, rgba(10,12,14,0.75), rgba(6,8,10,0.9));
+  border: 1px solid rgba(255,255,255,0.04);
+  box-shadow: 0 30px 60px rgba(2,6,23,0.6), 0 2px 6px rgba(0,0,0,0.6) inset;
+  color: #e6f0fb;
+}
+
+/* left/right sidebars: slightly translucent and higher contrast */
+.workspace-bg .editor-grid > .card:first-child,
+.workspace-bg .editor-grid > .card:last-child {
+  background: linear-gradient(180deg, rgba(12,14,16,0.72), rgba(8,9,11,0.85));
+  border-left: 1px solid rgba(255,255,255,0.02);
+  border-right: 1px solid rgba(255,255,255,0.02);
+}
+
+/* viewer card: ultra-black glass to make 3D content pop */
+.workspace-bg .editor-grid > .card:nth-child(2) {
+  background: linear-gradient(180deg, rgba(6,8,10,0.95), rgba(2,4,6,0.98));
+  border-radius: 14px;
+  box-shadow: 0 40px 90px rgba(2,6,23,0.8);
+  padding: 12px;
+}
+.workspace-bg .editor-grid > .card:nth-child(2) > div {
+  border: 1px solid rgba(255,255,255,0.03);
+  background: linear-gradient(180deg, rgba(2,4,6,1), rgba(8,10,12,1));
+  box-shadow: inset 0 -24px 48px rgba(0,0,0,0.6);
+}
+
+/* headings and accents */
+.workspace-bg .section-title { color: #e6eef6; border-bottom-color: rgba(255,255,255,0.03); }
+.workspace-bg .section-title::before { box-shadow: 0 8px 24px rgba(120,90,50,0.18); }
+
+/* inputs & selects for dark */
+.workspace-bg .card input[type="text"],
+.workspace-bg .card input[type="number"],
+.workspace-bg .card textarea,
+.workspace-bg .card select,
+.workspace-bg .card .input-field,
+.workspace-bg .card .input-coffee {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04) !important;
+  color: #eaf6ff;
+  box-shadow: none;
+}
+.workspace-bg .card input::placeholder, .workspace-bg .card textarea::placeholder { color: rgba(255,255,255,0.28); }
+.workspace-bg .card input:focus, .workspace-bg .card textarea:focus, .workspace-bg .card select:focus {
+  box-shadow: 0 8px 30px rgba(80,120,200,0.06);
+  border-color: rgba(80,130,220,0.18);
+}
+
+/* button themes for dark: gold accent with subtle glow */
+.workspace-bg .btn-coffee {
+  background: linear-gradient(90deg, #f3c86a 0%, #d7a24f 60%);
+  color: #081017;
+  box-shadow: 0 12px 36px rgba(215,162,79,0.18), 0 2px 6px rgba(0,0,0,0.5);
+}
+.workspace-bg .btn-coffee:hover { box-shadow: 0 18px 50px rgba(215,162,79,0.22); transform: translateY(-3px); }
+.workspace-bg .btn-coffee-ghost {
+  color: #f3e3c6;
+  border: 1px solid rgba(243,200,120,0.06);
+  background: transparent;
+}
+.workspace-bg .btn-soft {
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  color: #dbe9f6;
+  border: 1px solid rgba(255,255,255,0.03);
+}
+
+/* room items and lists */
+.workspace-bg .card .room-item { background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00)); border: 1px solid rgba(255,255,255,0.02); }
+.workspace-bg .card .avatar { background: linear-gradient(180deg,#111419,#0f1417); color: #f3e6d0; border: 1px solid rgba(255,255,255,0.03); }
+
+/* scrollbar styling for dark sticky panels */
+.workspace-bg .editor-grid > .card:first-child::-webkit-scrollbar, .workspace-bg .editor-grid > .card:last-child::-webkit-scrollbar { width: 10px; }
+.workspace-bg .editor-grid > .card:first-child::-webkit-scrollbar-thumb, .workspace-bg .editor-grid > .card:last-child::-webkit-scrollbar-thumb { background: linear-gradient(180deg, rgba(215,162,79,0.12), rgba(215,162,79,0.08)); border-radius: 12px; }
+
+/* viewer badge glow */
+.workspace-bg .editor-grid > .card:nth-child(2)::after { background: radial-gradient(circle at 30% 30%, rgba(243,200,120,0.12), rgba(0,0,0,0)); opacity: .6; }
+
+/* modal/versions tweaks for dark */
+[style*="position: fixed"][style*="zIndex: 9999"], [style*="position: fixed"][style*="z-index: 9999"] { background: linear-gradient(180deg,#07080a,#0b0f14) !important; color: #dbe9f6 !important; border: 1px solid rgba(255,255,255,0.03) !important; }
+
+/* finer responsive tuning */
+@media (max-width: 900px) {
+  .workspace-bg .editor-grid > .card:nth-child(2) > div { height: 460px !important; }
+}
+
+/* done: dark premium theme */
+

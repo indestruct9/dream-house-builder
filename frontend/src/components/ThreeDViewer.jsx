@@ -884,11 +884,152 @@ const SceneInner = forwardRef(({ layout, selectedRoomName, onSelectRoom, onTrans
   );
 });
 
-const ThreeDViewer = forwardRef(({ layout = { rooms: [] }, modelPath = null, selectedRoomName, onSelectRoom, onTransformEnd, mode = "translate", snap = 0, isEditMode = false, externalFurniture = {}, onRoomsReady = null }, ref) => {
+const ThreeDViewer = forwardRef(({ layout = { rooms: [] }, modelPath = null, selectedRoomName, onSelectRoom, onTransformEnd, mode = "translate", snap = 0, isEditMode = false, externalFurniture = {}, onRoomsReady = null, mood = 'cozy' }, ref) => {
   const innerRef = useRef();
   const canvasElRef = useRef(null); // holds the WebGL canvas DOM element
   const [previewImg, setPreviewImg] = useState(null);
   const [renderMode, setRenderMode] = useState('furnished');
+
+  // Mood presets: control ambient/directional intensity, color, background and exposure
+  const moodPresets = {
+    cozy: { ambient: 0.58, dir: 0.9, dirColor: '#ffd6b3', bg: '#0f0b0a', ground: '#3e2b24', wall: '#efe0d6', floor: '#3e2b24', roomColor: '#2aa3ff', exposure: 0.9, tintStrength: 0.35 },
+    traditional: { ambient: 0.52, dir: 0.95, dirColor: '#ffd6c2', bg: '#120809', ground: '#4a1f1b', wall: '#f6e6e4', floor: '#4a1f1b', roomColor: '#c0392b', exposure: 0.95, tintStrength: 0.32 },
+    luxury: { ambient: 0.45, dir: 1.2, dirColor: '#fff6e6', bg: '#050507', ground: '#1f1a17', wall: '#f7efe6', floor: '#2a1f18', roomColor: '#d4af37', exposure: 1.15, tintStrength: 0.28 },
+    minimalist: { ambient: 0.95, dir: 0.6, dirColor: '#ffffff', bg: '#f6f6f6', ground: '#eaeaea', wall: '#ffffff', floor: '#f0f0f0', roomColor: '#ffb6c1', exposure: 1.0, tintStrength: 0.12 },
+    warm: { ambient: 0.7, dir: 0.95, dirColor: '#ffd5a3', bg: '#120b07', ground: '#5a3f33', wall: '#f4e6db', floor: '#5a3f33', roomColor: '#8b5e3c', exposure: 1.0, tintStrength: 0.36 },
+    modern: { ambient: 0.6, dir: 1.0, dirColor: '#dfefff', bg: '#0b0f12', ground: '#222222', wall: '#e9eef2', floor: '#222222', roomColor: '#a8d0ff', exposure: 1.2, tintStrength: 0.22 },
+    default: { ambient: 0.7, dir: 1.0, dirColor: '#ffffff', bg: '#111111', ground: '#e8c39e', wall: '#f2efe8', floor: '#e8c39e', roomColor: '#ffffff', exposure: 1.0, tintStrength: 0.18 }
+  };
+
+  const MoodLights = ({ moodKey }) => {
+    const key = (moodKey || '').toString().trim().toLowerCase();
+    const preset = (key && moodPresets[key]) ? moodPresets[key] : moodPresets.default;
+    const { gl, scene } = useThree();
+    useEffect(() => {
+      try {
+        gl.toneMappingExposure = preset.exposure;
+        gl.outputEncoding = THREE.sRGBEncoding;
+      } catch (e) {}
+    }, [preset, gl]);
+
+    return (
+      <>
+        <ambientLight intensity={preset.ambient} color={preset.dirColor} />
+        <directionalLight position={[5, 10, 7]} intensity={preset.dir} color={preset.dirColor} castShadow />
+        <color attach="background" args={[preset.bg]} />
+      </>
+    );
+  };
+
+  // Apply a subtle tint to scene materials based on mood. We store original colors
+  // on material.userData._origColor so the tint can be re-applied deterministically.
+  const applyMoodTint = (sceneRoot, preset) => {
+    if (!sceneRoot || !preset) return;
+    const target = new THREE.Color(preset.ground || preset.dirColor || '#ffffff');
+    const factor = preset.tintStrength || 0.18; // tint strength per-preset
+
+    sceneRoot.traverse((child) => {
+      if (child.isMesh && child.material) {
+        // compute bounding box to heuristically detect floor/wall
+        let isFloor = false;
+        let isWall = false;
+        try {
+          const box = new THREE.Box3().setFromObject(child);
+          const size = box.getSize(new THREE.Vector3());
+          const maxDim = Math.max(size.x, size.y, size.z);
+          // floor: large X/Z, very thin Y or plane rotated flat
+          if ((size.x > 6 && size.z > 6 && size.y < 0.6) || (child.geometry && child.geometry.type && child.geometry.type.toLowerCase().includes('plane')) ) {
+            isFloor = true;
+          }
+          // wall: tall in Y and relatively thin in depth
+          if ((size.y > 2 && size.x > 2 && size.z < 1.5) || (size.y > 2 && size.x < 1.5)) {
+            isWall = true;
+          }
+        } catch (e) {}
+
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach((mat) => {
+          try {
+            if (!mat.userData) mat.userData = {};
+            // preserve original color
+            if (mat.color && mat.color.isColor) {
+              if (!mat.userData._origColor) mat.userData._origColor = mat.color.clone();
+            }
+
+            // If we detected floor or wall, apply explicit color from preset
+            if (isFloor && mat.color && preset.floor) {
+              mat.color.copy(new THREE.Color(preset.floor));
+              mat.needsUpdate = true;
+              return;
+            }
+            if (isWall && mat.color && preset.wall) {
+              mat.color.copy(new THREE.Color(preset.wall));
+              mat.needsUpdate = true;
+              return;
+            }
+            // If material is interior BackSide (room interior box), force roomColor if preset provides it
+            try {
+              if (mat.side === THREE.BackSide && preset.roomColor) {
+                mat.color.copy(new THREE.Color(preset.roomColor));
+                mat.needsUpdate = true;
+                return;
+              }
+            } catch (e) {}
+
+            // otherwise blend original toward target tint
+            if (mat.color && mat.color.isColor) {
+              const orig = mat.userData._origColor ? mat.userData._origColor.clone() : mat.color.clone();
+              const mixed = orig.clone().lerp(target, factor);
+              mat.color.copy(mixed);
+              mat.needsUpdate = true;
+            }
+
+            // adjust emissive subtly for warmth
+            if (mat.emissive && mat.emissive.isColor && preset.dirColor) {
+              if (!mat.userData._origEmissive) mat.userData._origEmissive = mat.emissive.clone();
+              const eOrig = mat.userData._origEmissive.clone();
+              const eTarget = new THREE.Color(preset.dirColor).multiplyScalar(0.06);
+              mat.emissive.copy(eOrig.lerp(eTarget, factor));
+              mat.needsUpdate = true;
+            }
+          } catch (e) {}
+        });
+      }
+    });
+  };
+
+  // MoodTint component runs in the R3F render loop and has access to scene via useThree
+  const MoodTint = ({ moodKey }) => {
+    const key = (moodKey || '').toString().trim().toLowerCase();
+    const preset = (key && moodPresets[key]) ? moodPresets[key] : moodPresets.default;
+    const { scene } = useThree();
+    const frameRef = useRef(0);
+
+    useEffect(() => {
+      try {
+        // apply immediately when mood or scene changes
+        applyMoodTint(scene, preset);
+        frameRef.current = 0;
+      } catch (e) {}
+    }, [scene, key]);
+
+    // re-apply tint during the render loop for the first few seconds
+    // to catch asynchronously-loaded models; afterwards re-apply periodically
+    useFrame(() => {
+      try {
+        frameRef.current += 1;
+        // aggressively apply for first 120 frames (~2s at 60fps)
+        if (frameRef.current < 120) {
+          applyMoodTint(scene, preset);
+        } else if (frameRef.current % 120 === 0) {
+          // re-apply every 120 frames (~2s) afterwards to stay resilient
+          applyMoodTint(scene, preset);
+        }
+      } catch (e) {}
+    });
+
+    return null;
+  };
 
   // forward capture
   useImperativeHandle(ref, () => ({
@@ -1088,10 +1229,9 @@ const ThreeDViewer = forwardRef(({ layout = { rooms: [] }, modelPath = null, sel
           </button>
         </div>
 
-  <Canvas shadows={false} camera={{ position: [4, 3, 8], fov: 45 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
-          <ambientLight intensity={0.7} />
-          <directionalLight position={[5, 10, 7]} intensity={1} castShadow />
-          <directionalLight position={[-5, 8, -7]} intensity={0.6} castShadow />
+      <Canvas shadows={false} camera={{ position: [4, 3, 8], fov: 45 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
+        <MoodLights moodKey={mood} />
+        <MoodTint moodKey={mood} />
           {/* Ground plane with cultural patterns */}
           <mesh rotation={[-Math.PI/2, 0, 0]} position={[0, -0.1, 0]} receiveShadow>
             <planeGeometry args={[50, 50]} />
@@ -1181,7 +1321,9 @@ const ThreeDViewer = forwardRef(({ layout = { rooms: [] }, modelPath = null, sel
           Schematic
         </button>
       </div>
-  <Canvas shadows={false} camera={{ position: [8, 6, 8], fov: 50 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
+      <Canvas shadows={false} camera={{ position: [8, 6, 8], fov: 50 }} onCreated={({ gl }) => { canvasElRef.current = gl.domElement; }}>
+        <MoodLights moodKey={mood} />
+        <MoodTint moodKey={mood} />
         {typeof modelPath === 'string' && modelPath.startsWith('demo-exterior') ? (
           (renderMode === 'schematic') ? <DemoExteriorSchematic /> : <DemoExteriorScene />
         ) : typeof modelPath === 'string' && modelPath.startsWith('demo-culture') ? (

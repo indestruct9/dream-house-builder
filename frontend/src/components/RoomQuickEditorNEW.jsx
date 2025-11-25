@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SingleItemViewer from './SingleItemViewer';
 
 // Full-page mini-game: larger 2D preview, gallery of many items, and a cart.
 // Self-contained: does not mutate application state.
@@ -25,6 +26,7 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
   const [previewItems, setPreviewItems] = useState([]); // items placed inside the preview
   const [cart, setCart] = useState([]); // items queued to buy/add
   const [burst, setBurst] = useState(null);
+  const [view3DItem, setView3DItem] = useState(null);
 
   // Load persisted preview items for this room (demo persistence)
   useEffect(() => {
@@ -113,7 +115,8 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
     smallButton: { padding: '6px 8px', fontSize: 13 }
   };
 
-  return (
+return (
+  <>
     <div style={style.overlay}>
       <div style={style.container}>
         <div style={style.left}>
@@ -165,6 +168,7 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
                     <div style={{ fontSize: 12, color: '#666' }}>{ci.cat} • ${ci.price}</div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                       <button className="btn-soft" style={style.smallButton} onClick={() => addToCart(ci)}>Add to Cart</button>
+                      <button className="btn-soft" style={style.smallButton} onClick={() => setView3DItem(ci.key)}>View in 3D</button>
                     </div>
                   </div>
                 ))}
@@ -213,5 +217,22 @@ export default function RoomQuickEditorNEW({ visible = true, onClose = () => {},
         </div>
       </div>
     </div>
+    {/* modal: single item 3D viewer */}
+    {view3DItem && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setView3DItem(null)}>
+        <div style={{ width: 720, maxWidth: '95%', borderRadius: 10, overflow: 'hidden', background: '#fff' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderBottom: '1px solid #eee' }}>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>3D Preview</div>
+            <div>
+              <button className="btn-soft" onClick={() => setView3DItem(null)}>Close</button>
+            </div>
+          </div>
+          <div style={{ width: '100%', height: 480 }}>
+            <SingleItemViewer itemKey={view3DItem} />
+          </div>
+        </div>
+      </div>
+    )}
+  </>
   );
 }

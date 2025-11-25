@@ -34,6 +34,8 @@ export default function Editor() {
   const [compareRightLayout, setCompareRightLayout] = useState(null);
   const [compareDiff, setCompareDiff] = useState(null);
   const [loadingCompare, setLoadingCompare] = useState(false);
+  // UI mood state (used to tweak 3D viewer visuals)
+  const [mood, setMood] = useState('cozy');
 
   // Collab state
   const collabRef = useRef(null);
@@ -688,7 +690,7 @@ export default function Editor() {
     <div className="p-6 grid grid-cols-3 gap-6 editor-grid workspace-bg">
       <div className="col-span-1 space-y-4 card">
         <h2 className="section-title">Preferences</h2>
-        <PreferenceForm onGenerated={handleGenerated} />
+        <PreferenceForm onGenerated={handleGenerated} onMoodChange={(m) => setMood(m)} />
 
         <div className="mt-4">
           <h3 className="font-semibold">Add Room</h3>
@@ -794,14 +796,13 @@ export default function Editor() {
         <div style={{ height: 420, display: 'flex', alignItems: 'stretch' }}>
         <ThreeDViewer
           ref={viewerRef}
-          layout={layout ||
-          { rooms: [] }}
+          layout={layout || { rooms: [] }}
           selectedRoomName={selected}
           onSelectRoom={handleSelectRoom}
           onTransformEnd={handleTransformEnd}
           mode={transformMode}
-          snap={snapEnabled ?
-          snapSize : 0}
+          snap={snapEnabled ? snapSize : 0}
+          mood={mood}
         />
         </div>
         {/* Day 20: Render other users' cursors */}
@@ -911,7 +912,7 @@ export default function Editor() {
                         <div style={{ fontWeight: 600, marginBottom: 6 }}>Left: {compareLeftId}</div>
             
                         <div style={{ border: "1px solid #ddd", padding: 8, borderRadius: 6 }}>
-                          <ThreeDViewer layout={compareLeftLayout || { rooms: [] }} selectedRoomName={null} />
+                          <ThreeDViewer layout={compareLeftLayout || { rooms: [] }} selectedRoomName={null} mood={mood} />
                         </div>
                     
                     </div>
@@ -919,8 +920,7 @@ export default function Editor() {
                         <div style={{ fontWeight: 600, marginBottom: 6 }}>Right: {compareRightId}</div>
                         <div style={{ border: "1px solid #ddd", padding: 8, borderRadius: 6 }}>
        
-                          <ThreeDViewer layout={compareRightLayout ||
-                          { rooms: [] }} selectedRoomName={null} />
+                          <ThreeDViewer layout={compareRightLayout || { rooms: [] }} selectedRoomName={null} mood={mood} />
                         </div>
                       </div>
                     </div>
